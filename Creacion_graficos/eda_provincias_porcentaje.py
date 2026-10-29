@@ -1,180 +1,156 @@
 import os
 import sys
-import re
 import pandas as pd
 import plotly.express as px
 
-# Crear carpeta de gráficos si no existe
-os.makedirs("graficos", exist_ok=True)
+# Directorios
+dir_actual = os.path.dirname(os.path.abspath(__file__))
+dir_graficos = os.path.join(dir_actual, "graficos")
+os.makedirs(dir_graficos, exist_ok=True)
 
-ruta_padre = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
-sys.path.insert(0, ruta_padre)
+ruta_padre = os.path.abspath(os.path.join(dir_actual, '..'))
+if ruta_padre not in sys.path:
+    sys.path.insert(0, ruta_padre)
+if dir_actual not in sys.path:
+    sys.path.insert(0, dir_actual)
 
 from database_connection import supabase
+from bancas_diputados import (
+    cargar_datos_intervenciones,
+    calcular_metricas_provinciales_por_anio,
+    TOTAL_BANCAS_DIPUTADOS,
+    BANCAS_SENADORES_POR_PROVINCIA
+)
 
 print("==================================================")
-print("  GENERADOR DE PORCENTAJES PROVINCIALES (ESTILIZADO) ")
+print("  GENERADOR DE PORCENTAJES PROVINCIALES (ESTILIZADO)")
+print("  Normalización Per Cápita en Cámara de Diputados  ")
 print("==================================================")
 
-print("[+] Descargando textos y datos de parlamentarios...")
-todas_las_filas = []
-inicio = 0
-tamaño_lote = 1000
-
-while True:
-    respuesta = supabase.table("intervenciones") \
-        .select("id_intervencion, texto_gemini, texto_limpio, sesiones(fecha), parlamentarios(partido_politico, distrito_provincia)") \
-        .range(inicio, inicio + tamaño_lote - 1) \
-        .execute()
-    
-    filas = respuesta.data
-    if not filas:
-        break 
-        
-    for fila in filas:
-        sesion_data = fila.get("sesiones") or {}
-        fila["fecha"] = sesion_data.get("fecha", None)
-        
-        parla_data = fila.get("parlamentarios") or {}
-        fila["partido"] = parla_data.get("partido_politico", "No Identificado")
-        fila["provincia"] = parla_data.get("distrito_provincia", "No Identificada")
-        
-        if "sesiones" in fila: del fila["sesiones"]
-        if "parlamentarios" in fila: del fila["parlamentarios"]
-            
-    todas_las_filas.extend(filas)
-    inicio += tamaño_lote
-    print(f"  ... Descargados {len(todas_las_filas)} registros...")
-
-df = pd.DataFrame(todas_las_filas)
-
-print("\n[+] Limpiando ruido procedimental y procesando fechas...")
-
-def obtener_texto_final(row):
-    t_gemini = row.get('texto_gemini')
-    t_limpio = row.get('texto_limpio')
-    
-    t_gemini = '' if pd.isna(t_gemini) or t_gemini is None else str(t_gemini).strip()
-    t_limpio = '' if pd.isna(t_limpio) or t_limpio is None else str(t_limpio).strip()
-    
-    if t_gemini and t_gemini != 'OMITIDO_POR_LARGO':
-        return t_gemini
-    return t_limpio
-
-df['texto_final'] = df.apply(obtener_texto_final, axis=1)
-df = df[df['texto_final'] != '']
-
-df['fecha'] = pd.to_datetime(df['fecha'], errors='coerce')
-df['anio'] = df['fecha'].dt.year
-df = df.dropna(subset=['anio'])
-df['anio'] = df['anio'].astype(int)
-df = df[(df['anio'] >= 1929) & (df['anio'] <= 1939)]
-
-patrones = [
-    r"se va a votar", r"se votará", r"resulta afirmativa", r"resulta negativa",
-    r"queda levantada la sesión", r"queda abierta la sesión", r"se lee el artículo",
-    r"tiene la palabra", r"leyendo:", r"queda aprobado", r"a la comisión de",
-    r"votan \d+ señores diputados", r"se va a dar cuenta", r"concederá la palabra", 
-    r"orden del día", r"cuarto intermedio", r"asentimiento", r"se va a leer", 
-    r"mándela a la papelera", r"prosecretario", r"secretario", r"comuníquese al poder ejecutivo", 
-    r"dios guarde a vuestra honorabilidad", r"goce de dieta, la licencia", 
-    r"no haciéndose observación", r"nada en discusión", r"el texto proporcionado está vacío"
-]
-
-def clasificar_intervencion(row):
-    t_lower = str(row['texto_final']).lower()
-    if row['partido'] not in ["No Identificado", "NO IDENTIFICADO / FUNCIONARIO"]: return row['partido']
-    for p in patrones:
-        if re.search(p, t_lower): return "Trámite"
-    return "No Identificado (Real)"
-
-df['partido_limpio'] = df.apply(clasificar_intervencion, axis=1)
-
-df_politico = df[~df['partido_limpio'].isin(["Trámite", "No Identificado (Real)"])]
-df_provs = df_politico[df_politico['provincia'] != 'No Identificada']
-
-print("[+] Calculando porcentajes por año...")
-
-df_prov = df_provs.groupby(['anio', 'provincia']).size().reset_index(name='ints_provincia')
-totales_anio = df_prov.groupby('anio')['ints_provincia'].sum().reset_index(name='ints_totales_anio')
-
-df_prov = pd.merge(df_prov, totales_anio, on='anio')
-df_prov['pct_intervenciones'] = (df_prov['ints_provincia'] / df_prov['ints_totales_anio']) * 100
-
-df_prov = df_prov.sort_values(['anio', 'pct_intervenciones'], ascending=[True, False])
-df_prov_top10 = df_prov.groupby('anio').head(10).reset_index(drop=True)
+df = cargar_datos_intervenciones(supabase)
 
 anios = range(1929, 1940)
-provs_top = df_prov_top10['provincia'].unique()
-grilla_prov = pd.MultiIndex.from_product([anios, provs_top], names=['anio', 'provincia']).to_frame(index=False)
-
-df_final = pd.merge(grilla_prov, df_prov_top10, on=['anio', 'provincia'], how='left').fillna(0)
-df_final = df_final.sort_values(by=['anio', 'pct_intervenciones'], ascending=[True, False])
-
-df_final['texto_mostrar'] = df_final['pct_intervenciones'].apply(lambda x: f"{x:.1f}%" if x > 0 else "")
-
-print("\n[+] Generando archivo HTML de alto impacto visual...")
-
-max_y = df_final['pct_intervenciones'].max() * 1.25
 colores_vibrantes = px.colors.qualitative.Bold + px.colors.qualitative.Vivid
 
-fig = px.bar(
-    df_final, 
-    x="provincia", 
-    y="pct_intervenciones", 
-    color="provincia", 
-    animation_frame="anio", 
-    animation_group="provincia",
-    range_y=[0, max_y], 
-    title="<b>Composición Porcentual del Debate por Provincias (1929-1939)</b><br><sup style='color:#7f8c8d'>¿Quién dominaba la palabra en el Congreso Nacional?</sup>",
-    labels={'pct_intervenciones': '% de Participación', 'provincia': '', 'anio': 'Año Legislativo'},
-    color_discrete_sequence=colores_vibrantes,
-    text="texto_mostrar"
+def construir_grafico_estilizado(df_plot, y_col, titulo, subtitulo, label_y, archivo_salida, formato_texto=None, y_max_fijo=None):
+    max_y = y_max_fijo if y_max_fijo else (df_plot[y_col].max() * 1.25 if not df_plot.empty and df_plot[y_col].max() > 0 else 10)
+    
+    if formato_texto:
+        df_plot['texto_mostrar'] = df_plot[y_col].apply(formato_texto)
+    else:
+        df_plot['texto_mostrar'] = df_plot[y_col].apply(lambda x: f"{x:.1f}%" if x > 0 else "")
+
+    fig = px.bar(
+        df_plot, 
+        x="provincia", 
+        y=y_col, 
+        color="provincia", 
+        animation_frame="anio", 
+        animation_group="provincia",
+        range_y=[0, max_y], 
+        title=f"<b>{titulo}</b><br><sup style='color:#7f8c8d'>{subtitulo}</sup>",
+        labels={y_col: label_y, 'provincia': '', 'anio': 'Año Legislativo'},
+        color_discrete_sequence=colores_vibrantes,
+        text="texto_mostrar"
+    )
+
+    fig.update_traces(
+        textposition='outside', 
+        textfont=dict(size=14, family='Arial Black', color='#2C3E50'), 
+        cliponaxis=False,
+        marker_line_width=1.5,
+        marker_line_color='#2C3E50',
+        opacity=0.9
+    )
+
+    fig.update_layout(
+        xaxis={'categoryorder': 'total descending', 'showgrid': False, 'tickfont': dict(size=13, family='Arial', color='#2C3E50'), 'tickangle': -45},
+        yaxis={'showgrid': True, 'gridcolor': 'rgba(200, 200, 200, 0.4)', 'gridwidth': 1, 'tickfont': dict(color='#7f8c8d')},
+        margin=dict(l=60, r=60, t=100, b=120),
+        plot_bgcolor="rgba(255, 255, 255, 1)",
+        paper_bgcolor="rgba(244, 246, 248, 1)",
+        font=dict(family="Arial", color="#2C3E50"),
+        title_x=0.5,
+        title_font_size=24,
+        showlegend=False,
+        transition=dict(duration=0) 
+    )
+
+    fig.layout.updatemenus = []
+    if fig.layout.sliders:
+        for step in fig.layout.sliders[0].steps:
+            step.args[1]["transition"]["duration"] = 0
+            step.args[1]["frame"]["duration"] = 0
+            
+        slider = fig.layout.sliders[0]
+        slider.currentvalue.font.color = "#E74C3C"
+        slider.currentvalue.font.size = 24
+        slider.currentvalue.font.family = "Arial Black"
+        slider.currentvalue.prefix = "Año Activo: "
+        slider.bgcolor = "rgba(41, 128, 185, 0.6)"
+        slider.bordercolor = "#2C3E50"
+
+    # Eliminar autoplay en HTML para consistencia
+    html_bruto = fig.to_html(include_plotlyjs='cdn')
+    html_limpio = html_bruto.replace("Plotly.animate(", "//Plotly.animate(")
+
+    ruta_salida = os.path.join(dir_graficos, archivo_salida)
+    with open(ruta_salida, 'w', encoding='utf-8') as f:
+        f.write(html_limpio)
+
+    print(f" [OK] Generado: '{archivo_salida}'")
+
+
+# ==============================================================
+# 1. CÁMARA DE DIPUTADOS: CÁLCULO NORMALIZADO PER CÁPITA
+# ==============================================================
+print("\n[+] Calculando porcentajes para CÁMARA DE DIPUTADOS...")
+df_dip = calcular_metricas_provinciales_por_anio(df, camara='Diputados')
+
+todas_provs_dip = df_dip['provincia'].unique()
+grilla_dip = pd.MultiIndex.from_product([anios, todas_provs_dip], names=['anio', 'provincia']).to_frame(index=False)
+df_dip_completo = pd.merge(grilla_dip, df_dip, on=['anio', 'provincia'], how='left').fillna(0)
+
+# A. Gráfico Principal Normalizado Per Cápita (Participación ponderada por diputado)
+construir_grafico_estilizado(
+    df_plot=df_dip_completo,
+    y_col='pct_ints_per_capita',
+    titulo="Composición Porcentual Per Cápita en Diputados (1929-1939)",
+    subtitulo="Participación normalizada por número de diputados de c/jurisdicción (Nivelación del peso provincial)",
+    label_y="% Participación Per Cápita",
+    archivo_salida="porcentaje_provincias_diputados_per_capita.html"
 )
 
-fig.update_traces(
-    textposition='outside', 
-    textfont=dict(size=14, family='Arial Black', color='#2C3E50'), 
-    cliponaxis=False,
-    marker_line_width=1.5,
-    marker_line_color='#2C3E50',
-    opacity=0.9
+# B. Ratio de Intensidad Discursiva (% Voz Real / % Bancas)
+# 1.0 = Habla en proporción exacta a sus bancas; > 1.0 = Hiperactivo; < 1.0 = Subrepresentado
+construir_grafico_estilizado(
+    df_plot=df_dip_completo,
+    y_col='ratio_intensidad_ints',
+    titulo="Ratio de Sobrerrepresentación en Diputados (1929-1939)",
+    subtitulo="Voz Real en Recinto (% Intervenciones) sobre Representación Formal (% Bancas) [Equilibrio = 1.0x]",
+    label_y="Ratio (Voz / Bancas)",
+    archivo_salida="porcentaje_provincias_diputados_ratio.html",
+    formato_texto=lambda v: f"{v:.2f}x" if v > 0 else ""
 )
 
-fig.update_layout(
-    xaxis={'categoryorder': 'total descending', 'showgrid': False, 'tickfont': dict(size=13, family='Arial', color='#2C3E50'), 'tickangle': -45},
-    yaxis={'showgrid': True, 'gridcolor': 'rgba(200, 200, 200, 0.4)', 'gridwidth': 1, 'tickfont': dict(color='#7f8c8d')},
-    margin=dict(l=60, r=60, t=100, b=120),
-    plot_bgcolor="rgba(255, 255, 255, 1)",
-    paper_bgcolor="rgba(244, 246, 248, 1)",
-    font=dict(family="Arial", color="#2C3E50"),
-    title_x=0.5,
-    title_font_size=24,
-    showlegend=False,
-    transition=dict(duration=0) 
+
+# ==============================================================
+# 2. CÁMARA DE SENADORES: 2 BANCAS POR JURISDICCIÓN
+# ==============================================================
+print("\n[+] Calculando porcentajes para CÁMARA DE SENADORES...")
+df_sen = calcular_metricas_provinciales_por_anio(df, camara='Senadores')
+
+todas_provs_sen = df_sen['provincia'].unique()
+grilla_sen = pd.MultiIndex.from_product([anios, todas_provs_sen], names=['anio', 'provincia']).to_frame(index=False)
+df_sen_completo = pd.merge(grilla_sen, df_sen, on=['anio', 'provincia'], how='left').fillna(0)
+
+construir_grafico_estilizado(
+    df_plot=df_sen_completo,
+    y_col='pct_ints_bruto',
+    titulo="Composición Porcentual del Debate en el Senado (1929-1939)",
+    subtitulo="En el Senado cada jurisdicción posee exactamente 2 bancas (distribución equitativa)",
+    label_y="% de Intervenciones en el Senado",
+    archivo_salida="porcentaje_provincias_senadores.html"
 )
 
-# BLOQUEAMOS TRANSICIONES (cambios instantáneos) Y EL BOTÓN DE PLAY
-fig.layout.updatemenus = []
-if fig.layout.sliders:
-    for step in fig.layout.sliders[0].steps:
-        step.args[1]["transition"]["duration"] = 0
-        step.args[1]["frame"]["duration"] = 0
-        
-    slider = fig.layout.sliders[0]
-    slider.currentvalue.font.color = "#E74C3C"
-    slider.currentvalue.font.size = 24
-    slider.currentvalue.font.family = "Arial Black"
-    slider.currentvalue.prefix = "Año Activo: "
-    slider.bgcolor = "rgba(41, 128, 185, 0.6)"
-    slider.bordercolor = "#2C3E50"
-
-# GENERAR Y MODIFICAR EL HTML PARA ELIMINAR EL AUTOPLAY (La "magia" para que no empiece a correr)
-html_bruto = fig.to_html(include_plotlyjs='cdn')
-html_limpio = html_bruto.replace("Plotly.animate(", "//Plotly.animate(")
-
-archivo_salida = os.path.join("graficos", "porcentaje_intervenciones_provincias.html")
-with open(archivo_salida, 'w', encoding='utf-8') as f:
-    f.write(html_limpio)
-
-print(f"[✓] ¡Boom! Gráfico generado y SIN AUTOPLAY: '{archivo_salida}'")
+print("\n¡Proceso de eda_provincias_porcentaje.py finalizado con éxito!")

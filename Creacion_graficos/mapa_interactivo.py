@@ -1,132 +1,64 @@
 import os
 import sys
-import re
+import json
 import requests
 import pandas as pd
 import plotly.graph_objects as go
 
-# Crear carpeta de gráficos si no existe
-os.makedirs("graficos", exist_ok=True)
+# Directorios
+dir_actual = os.path.dirname(os.path.abspath(__file__))
+dir_graficos = os.path.join(dir_actual, "graficos")
+os.makedirs(dir_graficos, exist_ok=True)
 
-ruta_padre = os.path.abspath(os.path.join(os.path.dirname(__file__), '..'))
-sys.path.insert(0, ruta_padre)
+ruta_padre = os.path.abspath(os.path.join(dir_actual, '..'))
+if ruta_padre not in sys.path:
+    sys.path.insert(0, ruta_padre)
+if dir_actual not in sys.path:
+    sys.path.insert(0, dir_actual)
 
 from database_connection import supabase
+from bancas_diputados import (
+    cargar_datos_intervenciones,
+    calcular_metricas_provinciales_por_anio,
+    obtener_bancas_diputados,
+    TOTAL_BANCAS_DIPUTADOS,
+    BANCAS_SENADORES_POR_PROVINCIA
+)
 
 print("==================================================")
-print(" MAPA DE INTERVENCIONES CON TABLA INFERIOR CENTRADA")
+print(" MAPA DE INTERVENCIONES NORMALIZADO PER CÁPITA   ")
+print(" Cámara de Diputados y Senado (1929-1939)        ")
 print("==================================================")
 
-print("[+] Descargando cartografía oficial de Argentina...")
-url_geojson = "https://apis.datos.gob.ar/georef/api/provincias.geojson?max=24"
-headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
+# 1. Cartografía oficial IGN
+print("[+] Obteniendo cartografía oficial de Argentina...")
+ruta_geojson_local = os.path.join(dir_actual, "provincias.geojson")
+mapa_arg = None
 
-try:
-    respuesta = requests.get(url_geojson, headers=headers)
-    mapa_arg = respuesta.json()
-except Exception as e:
-    print(f"[!] Error al descargar el GeoJSON: {e}")
-    sys.exit()
+if os.path.exists(ruta_geojson_local):
+    try:
+        with open(ruta_geojson_local, "r", encoding="utf-8") as f:
+            mapa_arg = json.load(f)
+    except Exception:
+        pass
 
-print("[+] Descargando textos de la base de datos...")
-todas_las_filas = []
-inicio = 0
-tamaño_lote = 1000
+if not mapa_arg:
+    url_geojson = "https://apis.datos.gob.ar/georef/api/provincias.geojson?max=24"
+    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
+    try:
+        respuesta = requests.get(url_geojson, headers=headers, timeout=15)
+        mapa_arg = respuesta.json()
+        with open(ruta_geojson_local, "w", encoding="utf-8") as f:
+            json.dump(mapa_arg, f)
+    except Exception as e:
+        print(f"[!] Error al descargar el GeoJSON: {e}")
+        sys.exit(1)
 
-while True:
-    respuesta = supabase.table("intervenciones") \
-        .select("id_intervencion, texto_gemini, texto_limpio, sesiones(fecha), parlamentarios(partido_politico, distrito_provincia)") \
-        .range(inicio, inicio + tamaño_lote - 1) \
-        .execute()
-    
-    filas = respuesta.data
-    if not filas:
-        break 
-        
-    for fila in filas:
-        sesion_data = fila.get("sesiones") or {}
-        fila["fecha"] = sesion_data.get("fecha", None)
-        
-        parla_data = fila.get("parlamentarios") or {}
-        fila["partido"] = parla_data.get("partido_politico", "No Identificado")
-        fila["provincia"] = parla_data.get("distrito_provincia", "No Identificada")
-        
-        if "sesiones" in fila: del fila["sesiones"]
-        if "parlamentarios" in fila: del fila["parlamentarios"]
-            
-    todas_las_filas.extend(filas)
-    inicio += tamaño_lote
-    print(f"  ... Descargados {len(todas_las_filas)} registros...")
-
-df = pd.DataFrame(todas_las_filas)
-
-print("\n[+] Limpiando ruido y procesando fechas...")
-
-def obtener_texto_final(row):
-    t_gemini = row.get('texto_gemini')
-    t_limpio = row.get('texto_limpio')
-    t_gemini = '' if pd.isna(t_gemini) or t_gemini is None else str(t_gemini).strip()
-    t_limpio = '' if pd.isna(t_limpio) or t_limpio is None else str(t_limpio).strip()
-    if t_gemini and t_gemini != 'OMITIDO_POR_LARGO': return t_gemini
-    return t_limpio
-
-df['texto_final'] = df.apply(obtener_texto_final, axis=1)
-df = df[df['texto_final'] != '']
-
-df['fecha'] = pd.to_datetime(df['fecha'], errors='coerce')
-df['anio'] = df['fecha'].dt.year
-df = df.dropna(subset=['anio'])
-df['anio'] = df['anio'].astype(int)
-df = df[(df['anio'] >= 1929) & (df['anio'] <= 1939)]
-
-patrones = [
-    r"se va a votar", r"se votará", r"resulta afirmativa", r"resulta negativa",
-    r"queda levantada la sesión", r"queda abierta la sesión", r"se lee el artículo",
-    r"tiene la palabra", r"leyendo:", r"queda aprobado", r"a la comisión de",
-    r"votan \d+ señores diputados", r"se va a dar cuenta", r"concederá la palabra", 
-    r"orden del día", r"cuarto intermedio", r"asentimiento", r"se va a leer"
-]
-
-def clasificar_intervencion(row):
-    t_lower = str(row['texto_final']).lower()
-    if row['partido'] not in ["No Identificado", "NO IDENTIFICADO / FUNCIONARIO"]: return row['partido']
-    for p in patrones:
-        if re.search(p, t_lower): return "Trámite"
-    return "No Identificado (Real)"
-
-df['partido_limpio'] = df.apply(clasificar_intervencion, axis=1)
-
-mapeo_provincias = {
-    'CABA': 'Ciudad Autónoma de Buenos Aires',
-    'Cdad. Autónoma de Bs. As.': 'Ciudad Autónoma de Buenos Aires',
-    'Capital Federal': 'Ciudad Autónoma de Buenos Aires',
-    'RíoNegro': 'Río Negro',
-    'Stgo. del Estero': 'Santiago del Estero',
-    'T. del Fuego': 'Tierra del Fuego, Antártida e Islas del Atlántico Sur'
-}
-df['provincia'] = df['provincia'].replace(mapeo_provincias)
-
-df_politico = df[~df['partido_limpio'].isin(["Trámite", "No Identificado (Real)"])]
-df_provs = df_politico[df_politico['provincia'] != 'No Identificada']
-
-print("[+] Calculando porcentajes...")
-
-df_prov = df_provs.groupby(['anio', 'provincia']).size().reset_index(name='ints_provincia')
-totales_anio = df_prov.groupby('anio')['ints_provincia'].sum().reset_index(name='ints_totales_anio')
-
-df_prov = pd.merge(df_prov, totales_anio, on='anio')
-df_prov['pct_intervenciones'] = (df_prov['ints_provincia'] / df_prov['ints_totales_anio']) * 100
+# 2. Cargar intervenciones parlamentarias
+df = cargar_datos_intervenciones(supabase)
 
 anios = range(1929, 1940)
 todas_las_provincias = [feature['properties']['nombre'] for feature in mapa_arg['features']]
-grilla_prov = pd.MultiIndex.from_product([anios, todas_las_provincias], names=['anio', 'provincia']).to_frame(index=False)
-
-df_final = pd.merge(grilla_prov, df_prov, on=['anio', 'provincia'], how='left').fillna(0)
-df_final = df_final.sort_values(by=['anio', 'provincia'])
-
-df_final['hover_text'] = df_final['pct_intervenciones'].apply(lambda x: f"{x:.2f}%")
-
-print("\n[+] Generando diseño con espacios rígidos para evitar superposición...")
 
 rojos_fuertes = [
     [0.0, "#ffffff"],       
@@ -134,145 +66,250 @@ rojos_fuertes = [
     [0.4, "#e60000"],       
     [1.0, "#660000"]        
 ]
-max_pct = df_final['pct_intervenciones'].max()
 
-# Instanciamos la figura vacía
-fig = go.Figure()
+azules_senado = [
+    [0.0, "#ffffff"],       
+    [0.01, "#d4e6f1"],      
+    [0.4, "#2980b9"],       
+    [1.0, "#154360"]        
+]
 
-frames = []
-slider_steps = []
 
-for anio in anios:
-    df_anio = df_final[df_final['anio'] == anio].copy()
-    
-    # Tabla: excluir el 0% y ordenar
-    df_tabla = df_anio[df_anio['pct_intervenciones'] > 0].sort_values(by='pct_intervenciones', ascending=False)
-    provincias_tabla = df_tabla['provincia'].tolist()
-    porcentajes_tabla = df_tabla['hover_text'].tolist()
+def generar_mapa_con_tabla(
+    camara: str = 'Diputados',
+    metrica_color: str = 'ints_per_capita',
+    titulo: str = "Mapa del Debate Parlamentario en Diputados (Per Cápita)",
+    subtitulo: str = "Intervenciones por diputado de cada jurisdicción (Nivelación formal)",
+    label_barra: str = "Ints/Dip",
+    archivo_salida: str = "mapa_provincias_con_tabla.html",
+    es_senado: bool = False
+):
+    print(f"\n[+] Generando mapa interactivo para '{camara}' (Métrica: {metrica_color})...")
+    df_metricas = calcular_metricas_provinciales_por_anio(
+        df, camara=camara, usar_nombres_geojson=True
+    )
 
-    if anio == 1929:
-        # A. EL MAPA
-        fig.add_trace(
-            go.Choropleth(
-                geojson=mapa_arg,
-                locations=df_anio['provincia'],
-                featureidkey='properties.nombre',
-                z=df_anio['pct_intervenciones'],
-                text=df_anio['hover_text'], 
-                colorscale=rojos_fuertes,
-                zmin=0, zmax=max_pct,
-                marker_line_width=0.8,
-                marker_line_color='#2C3E50',
-                hovertemplate="<b style='font-size:15px;'>%{location}</b><br><br>Participación: <b>%{text}</b><extra></extra>",
-                colorbar=dict(
-                    title="<b>%</b>",
-                    thicknessmode="pixels", thickness=15,
-                    lenmode="pixels", len=250,
-                    yanchor="middle", y=0.75, # Alineado al sector superior
-                    x=0.9,
-                    ticks="outside"
+    grilla = pd.MultiIndex.from_product([anios, todas_las_provincias], names=['anio', 'provincia']).to_frame(index=False)
+    df_final = pd.merge(grilla, df_metricas, on=['anio', 'provincia'], how='left').fillna(0)
+    df_final = df_final.sort_values(by=['anio', 'provincia'])
+
+    # Si es Diputados y bancas = 0 (provincias sin representación ese año), asegurar bancas históricas
+    if camara == 'Diputados':
+        df_final['bancas'] = df_final['provincia'].apply(obtener_bancas_diputados)
+        df_final['pct_bancas'] = (df_final['bancas'] / float(TOTAL_BANCAS_DIPUTADOS)) * 100.0
+    elif camara == 'Senadores':
+        df_final['bancas'] = BANCAS_SENADORES_POR_PROVINCIA
+        df_final['pct_bancas'] = (BANCAS_SENADORES_POR_PROVINCIA / 30.0) * 100.0
+
+    max_z = df_final[metrica_color].max()
+    if max_z <= 0:
+        max_z = 10.0
+
+    fig = go.Figure()
+    frames = []
+    slider_steps = []
+
+    escala_color = azules_senado if es_senado else rojos_fuertes
+    color_header = "#154360" if es_senado else "#E60000"
+
+    for anio in anios:
+        df_anio = df_final[df_final['anio'] == anio].copy()
+        
+        # Datos para hover y tabla
+        df_anio['custom_bancas'] = df_anio['bancas'].astype(int)
+        df_anio['custom_pct_bancas'] = df_anio['pct_bancas'].round(1)
+        df_anio['custom_ints'] = df_anio['ints'].astype(int)
+        df_anio['custom_pct_ints'] = df_anio['pct_ints_bruto'].round(1)
+        df_anio['custom_ints_pc'] = df_anio['ints_per_capita'].round(2)
+        df_anio['custom_pct_pc'] = df_anio['pct_ints_per_capita'].round(1)
+        df_anio['custom_ratio'] = df_anio['ratio_intensidad_ints'].round(2)
+
+        customdata_mapa = df_anio[[
+            'custom_bancas', 'custom_pct_bancas', 'custom_ints',
+            'custom_pct_ints', 'custom_pct_pc', 'custom_ratio'
+        ]].values
+
+        # Tabla: ordenar por métrica principal descendente
+        df_tabla = df_anio[df_anio['ints'] > 0].sort_values(by=metrica_color, ascending=False)
+        if df_tabla.empty:
+            df_tabla = df_anio.head(5)
+
+        t_provs = df_tabla['provincia'].tolist()
+        t_bancas = [f"{int(b)}" for b in df_tabla['bancas']]
+        t_ints = [f"{int(i):,}".replace(",", ".") for i in df_tabla['ints']]
+        t_pc = [f"{v:.2f}" for v in df_tabla['ints_per_capita']]
+        t_pct_bruto = [f"{v:.1f}%" for v in df_tabla['pct_ints_bruto']]
+        t_ratio = [f"{v:.2f}x" for v in df_tabla['ratio_intensidad_ints']]
+
+        if anio == 1929:
+            # 1. Trace Coroplético
+            fig.add_trace(
+                go.Choropleth(
+                    geojson=mapa_arg,
+                    locations=df_anio['provincia'],
+                    featureidkey='properties.nombre',
+                    z=df_anio[metrica_color],
+                    customdata=customdata_mapa,
+                    colorscale=escala_color,
+                    zmin=0, zmax=max_z,
+                    marker_line_width=0.8,
+                    marker_line_color='#2C3E50',
+                    hovertemplate=(
+                        "<b style='font-size:16px;'>%{location}</b><br><br>"
+                        "• Bancas: <b>%{customdata[0]}</b> (%{customdata[1]}% de la Cámara)<br>"
+                        "• Intervenciones Totales: <b>%{customdata[2]}</b> (%{customdata[3]}% del recinto)<br>"
+                        "• <b>Intervenciones / Diputado: %{z:.2f}</b><br>"
+                        "• % Ponderado Per Cápita: <b>%{customdata[4]}%</b><br>"
+                        "• Ratio Intensidad (Voz/Bancas): <b>%{customdata[5]}x</b><extra></extra>"
+                        if not es_senado else
+                        "<b style='font-size:16px;'>%{location}</b><br><br>"
+                        "• Bancas Senadores: <b>2</b> (6.7% de la Cámara)<br>"
+                        "• Intervenciones Totales: <b>%{customdata[2]}</b> (%{customdata[3]}% del debate)<br>"
+                        "• Intervenciones / Senador: <b>%{z:.2f}</b><extra></extra>"
+                    ),
+                    colorbar=dict(
+                        title=f"<b>{label_barra}</b>",
+                        thicknessmode="pixels", thickness=15,
+                        lenmode="pixels", len=250,
+                        yanchor="middle", y=0.75,
+                        x=0.9,
+                        ticks="outside"
+                    )
                 )
             )
-        )
-        
-        # B. LA TABLA
-        fig.add_trace(
-            go.Table(
-                header=dict(
-                    values=["<b>Provincia</b>", "<b>Participación</b>"],
-                    fill_color="#E60000",
-                    align="center",
-                    font=dict(color="white", size=14, family="Arial Black")
-                ),
-                cells=dict(
-                    values=[provincias_tabla, porcentajes_tabla],
-                    fill_color="#F4F6F8",
-                    align=["left", "center"],
-                    font=dict(color="#2C3E50", size=13),
-                    height=25
-                ),
-                # ESPACIO DE LA TABLA: Ancho centrado (25% a 75%) y de altura llega SÓLO hasta el 30%
-                domain=dict(x=[0.25, 0.75], y=[0.0, 0.30]) 
+
+            # 2. Trace Tabla Enriquecida Inferior
+            columnas_header = (
+                ["<b>Provincia</b>", "<b>Bancas</b>", "<b>Total Ints</b>", "<b>Ints / Diputado</b>", "<b>% Voz Real</b>", "<b>Ratio Intensidad</b>"]
+                if not es_senado else
+                ["<b>Provincia</b>", "<b>Bancas</b>", "<b>Total Ints</b>", "<b>Ints / Senador</b>", "<b>% Voz Real</b>"]
             )
+            valores_celdas = (
+                [t_provs, t_bancas, t_ints, t_pc, t_pct_bruto, t_ratio]
+                if not es_senado else
+                [t_provs, t_bancas, t_ints, t_pc, t_pct_bruto]
+            )
+
+            fig.add_trace(
+                go.Table(
+                    header=dict(
+                        values=columnas_header,
+                        fill_color=color_header,
+                        align="center",
+                        font=dict(color="white", size=13, family="Arial Black"),
+                        height=28
+                    ),
+                    cells=dict(
+                        values=valores_celdas,
+                        fill_color="#F4F6F8",
+                        align=["left", "center", "center", "center", "center", "center"] if not es_senado else ["left", "center", "center", "center", "center"],
+                        font=dict(color="#2C3E50", size=12),
+                        height=24
+                    ),
+                    domain=dict(x=[0.12, 0.88], y=[0.0, 0.32]) 
+                )
+            )
+
+        # Frame de actualización
+        frame_valores_celdas = (
+            [t_provs, t_bancas, t_ints, t_pc, t_pct_bruto, t_ratio]
+            if not es_senado else
+            [t_provs, t_bancas, t_ints, t_pc, t_pct_bruto]
         )
 
-    # Frame para actualización
-    frame = go.Frame(
-        data=[
-            go.Choropleth(
-                locations=df_anio['provincia'],
-                z=df_anio['pct_intervenciones'],
-                text=df_anio['hover_text']
-            ),
-            go.Table(
-                cells=dict(values=[provincias_tabla, porcentajes_tabla])
-            )
-        ],
-        name=str(anio)
+        frame = go.Frame(
+            data=[
+                go.Choropleth(
+                    locations=df_anio['provincia'],
+                    z=df_anio[metrica_color],
+                    customdata=customdata_mapa
+                ),
+                go.Table(cells=dict(values=frame_valores_celdas))
+            ],
+            name=str(anio)
+        )
+        frames.append(frame)
+
+        step = dict(
+            method="animate",
+            args=[
+                [str(anio)],
+                {"frame": {"duration": 0, "redraw": True}, "mode": "immediate", "transition": {"duration": 0}}
+            ],
+            label=str(anio)
+        )
+        slider_steps.append(step)
+
+    fig.frames = frames
+
+    sliders = [dict(
+        active=0,
+        y=0.45,
+        yanchor="bottom",
+        x=0.1,
+        len=0.8,
+        currentvalue=dict(
+            font=dict(size=20, color=color_header, family="Arial Black"),
+            prefix="Año Legislativo: "
+        ),
+        pad={"t": 10, "b": 10},
+        steps=slider_steps,
+        bgcolor="rgba(44, 62, 80, 0.6)",
+        bordercolor="#2C3E50"
+    )]
+
+    fig.update_geos(
+        scope="south america",
+        visible=False,
+        lataxis_range=[-55.5, -21.0], 
+        lonaxis_range=[-74.0, -53.0],
+        projection_type="mercator",
+        domain=dict(x=[0, 1], y=[0.55, 1.0])
     )
-    frames.append(frame)
 
-    # Botón del slider
-    step = dict(
-        method="animate",
-        args=[
-            [str(anio)],
-            {"frame": {"duration": 0, "redraw": True}, "mode": "immediate", "transition": {"duration": 0}}
-        ],
-        label=str(anio)
+    fig.update_layout(
+        height=1100, 
+        margin=dict(l=0, r=0, t=80, b=20),
+        plot_bgcolor="rgba(255, 255, 255, 1)",
+        paper_bgcolor="rgba(255, 255, 255, 1)",
+        font=dict(family="Arial", color="#2C3E50"),
+        title=f"<b>{titulo}</b><br><sup style='color:#7f8c8d'>{subtitulo}</sup>",
+        title_x=0.5,
+        title_font_size=24,
+        sliders=sliders,
+        updatemenus=[]
     )
-    slider_steps.append(step)
 
-fig.frames = frames
+    html_bruto = fig.to_html(include_plotlyjs='cdn')
+    html_limpio = html_bruto.replace("Plotly.animate(", "//Plotly.animate(")
 
-# Configuración del Slider
-sliders = [dict(
-    active=0,
-    y=0.45, # ESPACIO DEL SLIDER: Está en el 45% (crea un buffer de 15% entre la tabla y el slider)
-    yanchor="bottom", # Forzamos que crezca hacia arriba
-    x=0.1,
-    len=0.8,
-    currentvalue=dict(
-        font=dict(size=20, color="#E60000", family="Arial Black"),
-        prefix="Año Legislativo: "
-    ),
-    pad={"t": 10, "b": 10},
-    steps=slider_steps,
-    bgcolor="rgba(44, 62, 80, 0.6)",
-    bordercolor="#2C3E50"
-)]
+    ruta_salida = os.path.join(dir_graficos, archivo_salida)
+    with open(ruta_salida, 'w', encoding='utf-8') as f:
+        f.write(html_limpio)
 
-# Posición del Mapa
-fig.update_geos(
-    scope="south america",
-    visible=False,
-    lataxis_range=[-55.5, -21.0], 
-    lonaxis_range=[-74.0, -53.0],
-    projection_type="mercator",
-    domain=dict(x=[0, 1], y=[0.55, 1.0]) # ESPACIO DEL MAPA: Ocupa el 45% superior (dejando 10% de buffer con el slider)
+    print(f" [OK] Mapa guardado exitosamente: '{archivo_salida}'")
+
+
+# 1. Mapa en Diputados: NORMALIZADO PER CÁPITA
+generar_mapa_con_tabla(
+    camara='Diputados',
+    metrica_color='ints_per_capita',
+    titulo="Mapa del Debate en Diputados: Intervenciones Per Cápita (1929-1939)",
+    subtitulo="Intensidad discursiva normalizada por número de bancas de cada jurisdicción",
+    label_barra="Ints / Diputado",
+    archivo_salida="mapa_provincias_diputados_per_capita.html",
+    es_senado=False
 )
 
-# Estilos Generales
-fig.update_layout(
-    height=1100, 
-    margin=dict(l=0, r=0, t=80, b=20),
-    plot_bgcolor="rgba(255, 255, 255, 1)",
-    paper_bgcolor="rgba(255, 255, 255, 1)",
-    font=dict(family="Arial", color="#2C3E50"),
-    title="<b>Mapa del Debate Parlamentario (1929-1939)</b><br><sup style='color:#7f8c8d'>Distribución porcentual de las intervenciones por provincia</sup>",
-    title_x=0.5,
-    title_font_size=24,
-    sliders=sliders,
-    updatemenus=[]
+# 2. Mapa en Senado (2 senadores por provincia)
+generar_mapa_con_tabla(
+    camara='Senadores',
+    metrica_color='ints_per_capita',
+    titulo="Mapa del Debate en el Senado de la Nación (1929-1939)",
+    subtitulo="Distribución territorial equitativa: 2 senadores por jurisdicción",
+    label_barra="Ints / Senador",
+    archivo_salida="mapa_provincias_senadores.html",
+    es_senado=True
 )
 
-print("[+] Guardando archivo...")
-
-html_bruto = fig.to_html(include_plotlyjs='cdn')
-html_limpio = html_bruto.replace("Plotly.animate(", "//Plotly.animate(")
-
-archivo_salida = os.path.join("graficos", "mapa_provincias_con_tabla.html")
-with open(archivo_salida, 'w', encoding='utf-8') as f:
-    f.write(html_limpio)
-
-print(f"[✓] ¡Listo! Mapa y tabla con distribución perfecta en: '{archivo_salida}'")
+print("\n¡Proceso de mapa_interactivo.py finalizado con éxito!")
