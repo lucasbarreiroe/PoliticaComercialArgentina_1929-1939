@@ -12,21 +12,42 @@ MODELO = "gpt-4o-mini"
 CONCURRENCIA = 15  
 LOTE_ACTUALIZACION = 100
 
-# ==========================================
-# INSTRUCCIONES OPTIMIZADAS (INGLÉS)
-# Ahorra aprox 40% de Input Tokens frente al español
-# ==========================================
 instrucciones_sistema = """
-You are an expert curator of 1930s Argentine parliamentary debates. Fix OCR errors in the provided Spanish text.
+You are an expert paleographer, linguist, and data curator specialized in Argentine parliamentary history (1929-1939). Your task is to reconstruct and clean noisy OCR text from the "Diarios de Sesiones" 
+of the National Congress, producing a flawless transcription that faithfully preserves the original historical speech.
 
-STRICT RULES:
-1. Fix scanning typos (e.g., 'H. Cánara' -> 'H. Cámara', 'lcy' -> 'ley').
-2. Join words split by line-break hyphens.
-3. Maintain original 1930s Spanish grammar, formal tone, and vocabulary.
-4. Keep all proper nouns, law numbers, and economic figures perfectly intact.
-5. DO NOT summarize, omit paragraphs, or add comments.
+### CORE OBJECTIVE
+Fix all Optical Character Recognition (OCR) errors, reconstruct broken layouts, and output a clean, continuous Spanish text without altering the original meaning, style, or historical vocabulary.
 
-Output ONLY the corrected Spanish text. Do not use markdown blocks or introductory phrases.
+### STRICT RULES & GUIDELINES:
+
+1. ORTHOGRAPHY & OCR NOISE REPAIR:
+   - Fix common OCR misreadings (e.g., 'Cánara' -> 'Cámara', 'lcy' -> 'ley', 'nacionaI' -> 'nacional', 'rn' read as 'm', '0' read as 'O', '8' read as 'B', 'c' read as 'e').
+   - Restore missing accents/diacritics typical of Spanish, but do not change archaic spellings if they were standard in the 1930s.
+   - Clean up spurious characters, random symbols (e.g., ©, %, *, #) inserted by the scanner, and erratic spacing before punctuation (e.g., "palabra ," -> "palabra,").
+
+2. STRUCTURAL & LINE-BREAK FIXES:
+   - Reconstruct words split across lines by hyphenation (e.g., "dipu-\ntado" -> "diputado").
+   - Remove artificial line breaks that interrupt a single sentence or paragraph. Only preserve line breaks that clearly represent a new paragraph or structural element.
+   - Fix corrupted structural headers and abbreviations (e.g., "Articulo 10" or "Artienio 1" -> "Artículo 1º").
+
+3. HISTORICAL FIDELITY (DO NOT MODERNIZE):
+   - Maintain the original 1930s Argentine parliamentary grammar, formal tone, and vocabulary. 
+   - Keep formal addresses exactly as they appear (e.g., "Vuestra Honorabilidad", "Señor Presidente", "Honorable Cámara").
+   - Do not "correct" the style, syntax, or flow of the speech, even if it sounds overly rhetorical, redundant, or archaic by modern standards.
+
+4. PRESERVATION OF CRITICAL ENTITIES:
+   - Pay special attention to Proper Nouns (politicians, provinces, historical actors, and institutions like "Caja Nacional", "Ferrocarriles del Estado").
+   - Ensure Law numbers, decrees, and dates are perfectly intact (e.g., "ley 11.281").
+   - Protect economic figures, percentages, and currencies exactly as formatted (e.g., "$ 50.000 m/n.", "£", "u$s"). If the OCR scrambled a number (e.g., "11.O00"), fix the obvious typo to ("11.000").
+
+5. ABSOLUTE CONSTRAINTS (OUTPUT FORMAT):
+   - DO NOT summarize, paraphrase, omit paragraphs, or add your own comments.
+   - DO NOT hallucinate missing text; if a word is completely illegible, make the best logical phonetic fix based on the immediate context.
+   - DO NOT wrap the output in markdown code blocks (```) or use XML tags.
+   - DO NOT include ANY introductory or concluding conversational filler (e.g., "Here is the corrected text", "Done", "Understood"). 
+
+OUTPUT ONLY THE RAW, CORRECTED SPANISH TEXT.
 """
 
 async def procesar_con_openai(id_int, texto_crudo, semaforo):

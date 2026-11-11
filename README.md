@@ -49,20 +49,9 @@ Estudiar los debates del Congreso Nacional Argentino vinculados a la política c
 
 ---
 
-## 🗄️ Arquitectura de Base de Datos en Tercera Forma Normal (3NF)
+## 🗄️ Estructura de la Base de Datos en Supabase
 
-La base de datos en **Supabase (PostgreSQL)** está diseñada bajo un **esquema relacional puro en Tercera Forma Normal (3NF)** compuesto por **17 tablas canónicas** agrupadas en **6 subsistemas**, sin depender de vistas generadas ni columnas redundantes.
-
-### Principios de Normalización Aplicados
-
-* **Primera Forma Normal (1NF — Atomicidad)**:
-  * **Desagregación de Tomos y Sesiones Reales**: Los `209` volúmenes PDF de los *Diarios de Sesiones* se almacenan en `tomos_diarios_sesiones`, mientras que cada una de las `1.282` reuniones parlamentarias celebradas en días específicos se registra en `sesiones` con su `fecha_exacta` (`DATE`), `numero_reunion` y rango de páginas.
-  * **Eliminación de atributos multivaluados**: Las listas de leyes citadas por discurso se descomponen en la tabla puente `intervenciones_leyes_mencionadas` (`8.741` vínculos), las co-presidencias de sesión en `sesiones_autoridades` (`1.277` registros) y los artículos de cada proyecto o despacho en `articulos_iniciativa` (`57.176` artículos individuales).
-* **Segunda Forma Normal (2NF — Dependencia Funcional Completa)**:
-  * **Separación Persona Física vs. Mandato Temporal**: La identidad biográfica invariante reside en `personas` (`599` individuos únicos), mientras que sus cargos, distritos electorales, afiliaciones partidarias y períodos (`anio_inicio`, `anio_fin`) se modelan en `mandatos_legislativos` (`752` mandatos).
-  * **Separación Intervención vs. Versiones de Limpieza**: El discurso parlamentario en `intervenciones` (`64.636` registros) conserva la referencia exacta al evento en el recinto, mientras que las variantes de limpieza OCR/IA se normalizan en `intervenciones_versiones_texto` (`26.470` versiones).
-* **Tercera Forma Normal (3NF — Sin Dependencias Transitivas)**:
-  * Ninguna tabla de hechos almacena nombres repetidos de provincias, partidos, leyes o entidades económicas. Todo atributo no clave depende única y directamente de la clave primaria de su tabla mediante claves foráneas (`FOREIGN KEY ... ON DELETE RESTRICT`) hacia los catálogos maestros (`provincias`, `partidos_politicos`, `leyes`, `catalogo_entidades`).
+La base de datos en **Supabase (PostgreSQL)** está organizada en **Tercera Forma Normal (3NF)** a través de **13 tablas** distribuidas en **5 subsistemas** (catálogos invariantes, estructura institucional, publicaciones y sesiones, normas y proyectos, y debate parlamentario). Por su parte, el Reconocimiento de Entidades Nombradas (NER) y la generación del dashboard interactivo operan como un módulo analítico independiente en Python sobre los datos de estas tablas.
 
 ---
 
@@ -80,7 +69,7 @@ erDiagram
     SESIONES ||--o{ SESION_SUMARIOS : "indexa (id_sesion)"
 
     SESIONES ||--o{ INICIATIVAS_LEGISLATIVAS : "trata en recinto (id_sesion)"
-    SESION_SUMARIOS |o--o{ INICIATIVAS_LEGISLATIVAS : "origine en sumario (id_sumario)"
+    SESION_SUMARIOS |o--o{ INICIATIVAS_LEGISLATIVAS : "origina en sumario (id_sumario)"
     LEYES |o--o{ INICIATIVAS_LEGISLATIVAS : "sanciona o modifica (id_ley_sancionada)"
     INICIATIVAS_LEGISLATIVAS ||--o{ ARTICULOS_INICIATIVA : "desglosa en (id_iniciativa)"
 
@@ -89,15 +78,8 @@ erDiagram
     MANDATOS_LEGISLATIVOS |o--o{ INTERVENCIONES : "bajo banca o cargo (id_mandato)"
     SESION_SUMARIOS |o--o{ INTERVENCIONES : "sobre tema (id_sumario)"
 
-    INTERVENCIONES ||--o{ INTERVENCIONES_VERSIONES_TEXTO : "versiona OCR/IA (id_intervencion)"
     INTERVENCIONES ||--o{ INTERVENCIONES_LEYES_MENCIONADAS : "cita norma (id_intervencion)"
     LEYES ||--o{ INTERVENCIONES_LEYES_MENCIONADAS : "es citada en (id_ley)"
-
-    CATALOGO_ENTIDADES ||--o{ INTERVENCION_ENTIDADES : "agrega por discurso (id_entidad)"
-    INTERVENCIONES ||--o{ INTERVENCION_ENTIDADES : "resume entidades (id_intervencion)"
-
-    CATALOGO_ENTIDADES ||--o{ INTERVENCION_ENTIDAD_MENCIONES : "detecta ocurrencia (id_entidad)"
-    INTERVENCIONES ||--o{ INTERVENCION_ENTIDAD_MENCIONES : "contiene mencion (id_intervencion)"
 
     PROVINCIAS {
         int id_provincia PK
@@ -140,7 +122,7 @@ erDiagram
         varchar camara
         int anio_legislativo
         varchar numero_tomo
-        text ruta_pdf_drive
+        text archivo_pdf_origen
     }
 
     SESIONES {
@@ -173,6 +155,7 @@ erDiagram
         varchar numero_ley UK
         int numero_entero
         int anio_sancion
+        date fecha_promulgacion
         text denominacion
     }
 
@@ -212,77 +195,39 @@ erDiagram
         int id_intervencion PK, FK
         int id_ley PK, FK
     }
-
-    INTERVENCIONES_VERSIONES_TEXTO {
-        int id_version PK
-        int id_intervencion FK
-        varchar tipo_procesamiento
-        varchar modelo_llm
-        text texto_procesado
-    }
-
-    CATALOGO_ENTIDADES {
-        int id_entidad PK
-        varchar nombre_lista UK
-        varchar nombre_canonico
-        varchar categoria
-        text patron_regex
-        boolean requiere_desambiguacion_llm
-    }
-
-    INTERVENCION_ENTIDADES {
-        int id_intervencion PK, FK
-        int id_entidad PK, FK
-        int frecuencia
-        varchar postura_predominante
-    }
-
-    INTERVENCION_ENTIDAD_MENCIONES {
-        int id_mencion PK
-        int id_intervencion FK
-        int id_entidad FK
-        varchar termino_detectado
-        varchar postura_absa
-        text contexto_mencion
-        boolean validado_llm
-    }
 ```
 
 ---
 
-### Detalle de los 6 Subsistemas y las 17 Tablas en Supabase
+### Detalle de las 13 Tablas de la Base de Datos en Supabase
 
-| # | Subsistema | Tabla en Supabase (`public`) | Clave Primaria (PK) | Claves Foráneas (FK) | Registros Verificados | Propósito en el Modelo 3NF |
+| # | Subsistema | Tabla en Supabase (`public`) | Clave Primaria (PK) | Claves Foráneas (FK) | Registros Verificados | Propósito en la Base de Datos |
 | :-: | :--- | :--- | :--- | :--- | --: | :--- |
-| **01** | **1. Catálogos Invariantes** | `provincias` | `id_provincia` | — | **15** | Provincias históricas y Capital Federal normalizadas con código INDEC y región geográfica. |
-| **02** | **1. Catálogos Invariantes** | `partidos_politicos` | `id_partido` | — | **25** | Fuerzas políticas de la década de 1930, sigla y mapeo a coalición (`Concordancia`, `UCR`, `PS`, etc.). |
-| **03** | **1. Catálogos Invariantes** | `personas` | `id_persona` | — | **599** | Padrón único de personas físicas (legisladores, ministros del PE y autoridades de cámara). |
-| **04** | **2. Estructura Institucional** | `mandatos_legislativos` | `id_mandato` | `id_persona`, `id_provincia`, `id_partido` | **752** | Bancas y cargos temporales ejercidos por cada persona (`camara`, `cargo_especifico`, `anio_inicio`, `anio_fin`). |
-| **05** | **3. Publicaciones y Sesiones** | `tomos_diarios_sesiones` | `id_tomo` | — | **209** | Volúmenes físicos/PDF de los *Diarios de Sesiones* (`1929_D_TI` a `1939_S_TII`). |
-| **06** | **3. Publicaciones y Sesiones** | `sesiones` | `id_sesion` | `id_tomo` | **1.282** | Reuniones parlamentarias individuales extraídas de los PDFs con su `fecha_exacta` (`YYYY-MM-DD`) y páginas. |
-| **07** | **3. Publicaciones y Sesiones** | `sesiones_autoridades` | `(id_sesion, id_persona, rol_presidencia)` | `id_sesion`, `id_persona` | **1.277** | Autoridades que presidieron cada sesión parlamentaria (relación atómica `M:N`). |
-| **08** | **3. Publicaciones y Sesiones** | `sesion_sumarios` | `id_sumario` | `id_sesion` | **7.469** | Entradas del índice/sumario temático de cada sesión vinculadas a su reunión exacta. |
-| **09** | **4. Normas y Proyectos** | `leyes` | `id_ley` | — | **1.881** | Catálogo maestro de leyes nacionales sancionadas o referenciadas en los debates. |
-| **10** | **4. Normas y Proyectos** | `iniciativas_legislativas` | `id_iniciativa` | `id_sesion`, `id_sumario`, `id_ley_sancionada` | **11.263** | Cabecera unificada de proyectos de ley, despachos de comisión y sanciones en recinto. |
-| **11** | **4. Normas y Proyectos** | `articulos_iniciativa` | `id_articulo` | `id_iniciativa` | **57.176** | Desglose individual artículo por artículo (`Art. 1°`, `Art. 2°`, etc.) de cada iniciativa legislativa. |
-| **12** | **5. Debate Parlamentario** | `intervenciones` | `id_intervencion` | `id_sesion`, `id_persona`, `id_mandato`, `id_sumario` | **64.636** | Universo completo de intervenciones parlamentarias hiladas a su sesión con fecha exacta y a su orador. |
-| **13** | **5. Debate Parlamentario** | `intervenciones_leyes_mencionadas` | `(id_intervencion, id_ley)` | `id_intervencion`, `id_ley` | **8.741** | Tabla puente `M:N` que registra cada ley nacional citada dentro de una intervención. |
-| **14** | **5. Debate Parlamentario** | `intervenciones_versiones_texto` | `id_version` | `id_intervencion` | **26.470** | Historial de versiones de limpieza de texto (`HEURISTICA_REGEX` vs. curaduría `LLM_GEMINI`). |
-| **15** | **6. NER y Postura (ABSA)** | `catalogo_entidades` | `id_entidad` | — | **96** | Catálogo normalizado de entidades económicas, socios comerciales, tratados y actores políticos. |
-| **16** | **6. NER y Postura (ABSA)** | `intervencion_entidades` | `(id_intervencion, id_entidad)` | `id_intervencion`, `id_entidad` | **8.282** | Frecuencia agregada y postura predominante (`A_FAVOR`, `EN_CONTRA`, `NEUTRAL`) por discurso y entidad. |
-| **17** | **6. NER y Postura (ABSA)** | `intervencion_entidad_menciones` | `id_mencion` | `id_intervencion`, `id_entidad` | **17.771** | Ocurrencias individuales en texto con ventana de contexto y evaluación de sentimiento basado en aspectos (ABSA). |
+| **01** | **1. Catálogos** | `provincias` | `id_provincia` | — | **15** | Provincias históricas y Capital Federal normalizadas con código INDEC y región geográfica. |
+| **02** | **1. Catálogos** | `partidos_politicos` | `id_partido` | — | **25** | Fuerzas políticas unificadas de la década de 1930, sigla y mapeo a coalición (`Concordancia`, `UCR`, `PS`, etc.). |
+| **03** | **1. Catálogos** | `personas` | `id_persona` | — | **586** | Padrón depurado de personas físicas (legisladores, ministros del PE y autoridades de cámara). |
+| **04** | **2. Institucional** | `mandatos_legislativos` | `id_mandato` | `id_persona`, `id_provincia`, `id_partido` | **744** | Bancas y cargos temporales ejercidos por cada persona (`camara`, `cargo_especifico`, `anio_inicio`, `anio_fin`). |
+| **05** | **3. Sesiones** | `tomos_diarios_sesiones` | `id_tomo` | — | **209** | Volúmenes físicos/PDF de los *Diarios de Sesiones* (`1929` a `1939`). |
+| **06** | **3. Sesiones** | `sesiones` | `id_sesion` | `id_tomo` | **1.282** | Reuniones parlamentarias individuales extraídas de los PDFs con su `fecha_exacta` (`YYYY-MM-DD`). |
+| **07** | **3. Sesiones** | `sesiones_autoridades` | `(id_sesion, id_persona, rol_presidencia)` | `id_sesion`, `id_persona` | **1.276** | Autoridades que presidieron cada sesión parlamentaria. |
+| **08** | **3. Sesiones** | `sesion_sumarios` | `id_sumario` | `id_sesion` | **7.469** | Entradas del índice/sumario temático de cada sesión vinculadas a su reunión. |
+| **09** | **4. Normas y Proyectos** | `leyes` | `id_ley` | — | **2.136** | Catálogo de leyes nacionales: las **1.087 leyes sancionadas en 1929–1939** (`11.544` a `12.630`) + **1.049 leyes históricas pre-1929** (`48` a `11.543`). |
+| **10** | **4. Normas y Proyectos** | `iniciativas_legislativas` | `id_iniciativa` | `id_sesion`, `id_ley_sancionada` | **9.669** | Cabecera deduplicada de proyectos de ley, despachos en recinto y las 1.087 leyes sancionadas. |
+| **11** | **4. Normas y Proyectos** | `articulos_iniciativa` | `id_articulo` | `id_iniciativa` | **50.329** | Desglose individual artículo por artículo (`Art. 1°`, `Art. 2°`, etc.) de cada iniciativa y ley sancionada. |
+| **12** | **5. Debate Parlamentario** | `intervenciones` | `id_intervencion` | `id_sesion`, `id_persona`, `id_mandato`, `id_sumario` | **64.636** | Universo completo de intervenciones parlamentarias vinculadas a su sesión, página, fecha exacta y orador. |
+| **13** | **5. Debate Parlamentario** | `intervenciones_leyes_mencionadas` | `(id_intervencion, id_ley)` | `id_intervencion`, `id_ley` | **8.563** | Tabla puente que registra cada ley nacional citada dentro de una intervención. |
 
 ---
 
 ## 📂 Estructura del Repositorio
 
-A continuación se detalla la organización de los archivos disponibles en el repositorio:
+A continuación se detalla la organización limpia y modular del repositorio:
 
 ```text
-├── Arreglo_intervenciones/
+├── curacion_intervenciones/
 │   └── curador_ia.py                     # Curaduría y saneamiento de texto de intervenciones
 ├── Creacion_graficos/
-│   ├── graficos/                         # Visualizaciones interactivas en HTML (Plotly)
+│   ├── graficos/                         # Visualizaciones interactivas en HTML (Plotly y Dashboards)
 │   │   ├── animado_partidos_int_abs.html
 │   │   ├── animado_partidos_pal_abs.html
 │   │   ├── animado_partidos_relativo.html
@@ -293,6 +238,8 @@ A continuación se detalla la organización de los archivos disponibles en el re
 │   │   ├── animado_provincias_senadores_pal_abs.html
 │   │   ├── composicion_activa_diputados.html
 │   │   ├── composicion_activa_senadores.html
+│   │   ├── dashboard_roca_runciman_ner.html
+│   │   ├── dashboard_topic_modeling.html
 │   │   ├── evolucion_partidaria_1929_1939.html
 │   │   ├── mapa_provincias_diputados_per_capita.html
 │   │   ├── mapa_provincias_senadores.html
@@ -300,26 +247,22 @@ A continuación se detalla la organización de los archivos disponibles en el re
 │   │   ├── porcentaje_provincias_diputados_ratio.html
 │   │   ├── porcentaje_provincias_senadores.html
 │   │   └── volumen_total_intervenciones.html
-│   ├── bancas_diputados.py               # Diccionario histórico de bancas por distrito
+│   ├── bancas_diputados.py               # Diccionario de bancas e ingesta directa desde las tablas 3NF
 │   ├── eda_provincias.py                 # Análisis exploratorio provincial (absoluto y relativo)
 │   ├── eda_provincias_porcentaje.py      # Participación provincial en términos proporcionales
 │   ├── evolucion_composicion.py          # Análisis de la composición de las cámaras
 │   ├── evolucion_partidaria.py           # Dinámica de los partidos políticos en el tiempo
+│   ├── generar_dashboard_ner.py          # Generador unificado del Dashboard NER multi-nivel (4 capas)
 │   ├── interv_totales.py                 # Cálculo de totales y agregados del corpus
 │   ├── mapa_interactivo.py               # Generación de mapas coropléticos con Plotly
 │   └── provincias.geojson                # Geometrías de las provincias argentinas
-├── ESPECIFICACION_BASE_DATOS_3NF.md      # Especificación técnica formal del modelo 3NF
-├── MIGRACION_3NF_SUPABASE.sql            # Script transaccional SQL de migración a 3NF pura (sin vistas)
-├── extraer_fechas_sesiones_drive.py      # Extractor de sesiones y fechas exactas sobre los 209 PDFs en Drive
-├── verificar_migracion_3nf.py            # Auditor automático de integridad y población de las 17 tablas 3NF
-├── NER.py                                # Motor de Reconocimiento de Entidades (NER) y ABSA sobre 3NF
-├── extractor_avanzado.py                 # Parser de actas parlamentarias a doble columna
-├── extractor_provincias.py               # Asignación y normalización geográfica de oradores
-├── curador_ia_gemini.py                  # Curaduría de intervenciones asistida por IA
-├── cazador_delirios.py                   # Auditoría y control de calidad sobre texto curado
-├── corrector_diputados.py                # Normalización de identidades de legisladores
-├── corrector_intervenciones.py           # Estandarización y homogeneización de registros
 ├── database_connection.py                # Módulo de conexión a base de datos Supabase
+├── motor_ner.py                          # Motor de Reconocimiento de Entidades (NER) y ABSA sobre 3NF
+├── Lista Entidades - OCT26.pdf           # Catálogo de referencia de entidades políticas y comerciales
+├── extractor_intervenciones.py           # Parser y extractor de discursos parlamentarios a doble columna
+├── extractor_provincias.py               # Extractor del padrón histórico de legisladores y provincias
+├── extractor_sumarios_leyes.py           # Extractor de sumarios temáticos, proyectos y leyes sancionadas
+├── extractor_fechas_sesiones.py          # Extractor de sesiones, fechas y autoridades sobre los 209 tomos PDF
 ├── .gitignore                            # Exclusiones de control de versiones
 └── README.md                             # Documentación general y arquitectura 3NF del repositorio
 ```
@@ -360,13 +303,13 @@ SUPABASE_KEY=tu-clave-anon-o-service-role
 GEMINI_API_KEY=tu-api-key-de-gemini  # Opcional para curador_ia
 ```
 
-### Verificación de la Base de Datos 3NF y Ejecución de NER
+### Ejecución del Motor NER y Generación de Gráficos
 ```bash
-# Auditar las 17 tablas canónicas en 3NF en Supabase
-python verificar_migracion_3nf.py
-
 # Ejecutar el motor NER y ABSA directamente sobre las tablas 3NF
-python NER.py --lote 1000
+python motor_ner.py --lote 1000
+
+# Generar el Dashboard interactivo NER unificado (4 capas metodológicas)
+python Creacion_graficos/generar_dashboard_ner.py
 ```
 
 ---
