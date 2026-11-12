@@ -1,15 +1,29 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+Este script se encarga de curar los textos de las intervenciones legislativas con un LLM.
+
+A veces el OCR de los diarios de sesiones de los años 30 deja errores difíciles
+de resolver solo con reglas fijas (letras cambiadas, palabras cortadas o caracteres extraños).
+Lo que hace este script es enviar los discursos por lotes y en paralelo a la API de OpenAI,
+pidiéndole al modelo que corrija únicamente los defectos de digitalización sin modernizar
+ni alterar el vocabulario de la época.
+"""
+
+import os
 import asyncio
+from dotenv import load_dotenv
 from openai import AsyncOpenAI
 from database_connection import supabase
 
-# ==========================================
-# CONFIGURACIÓN OPENAI (TIER 1 - PAGO POR USO)
-# ==========================================
-API_KEY = "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"
+load_dotenv()
+
+# Configuración del cliente y parámetros de procesamiento
+API_KEY = os.getenv("OPENAI_API_KEY")
 cliente_ai = AsyncOpenAI(api_key=API_KEY)
 
 MODELO = "gpt-4o-mini"
-CONCURRENCIA = 15  
+CONCURRENCIA = 15  # Cantidad de llamadas simultáneas
 LOTE_ACTUALIZACION = 100
 
 instrucciones_sistema = """
@@ -52,10 +66,11 @@ OUTPUT ONLY THE RAW, CORRECTED SPANISH TEXT.
 
 async def procesar_con_openai(id_int, texto_crudo, semaforo):
     async with semaforo:
+        # Descartamos textos vacíos o demasiado breves (saludos o aclaraciones mínimas)
         if not texto_crudo or len(texto_crudo.strip()) < 10:
             return id_int, None, "OMITIDO_CORTO"
 
-        # REINCORPORADO: Límite de 5000 palabras para el barrido inicial
+        # Si supera las 5000 palabras lo salteamos en la primera pasada para no consumir tokens de más
         cantidad_palabras = len(texto_crudo.split())
         if cantidad_palabras > 5000:
             return id_int, None, "OMITIDO_LARGO"
@@ -78,9 +93,6 @@ async def procesar_con_openai(id_int, texto_crudo, semaforo):
             return id_int, None, "ERROR_API"
 
 async def curar_base_pago():
-    print("==================================================")
-    print(f"INICIANDO MOTOR (OPENAI - {MODELO.upper()} - PROMPT OPTIMIZADO)")
-    print("==================================================")
 
     ultimo_id = 0
     procesados_totales = 0

@@ -1,9 +1,20 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+Este script extrae la provincia de cada legislador a partir de las listas
+de composición que figuran al inicio de los tomos.
+
+Recorre las primeras páginas de cada PDF, busca los patrones 'Apellido, Nombre'
+seguido de su provincia o distrito, corrige las fallas típicas de OCR en los nombres
+de las provincias y genera un CSV limpio para vincular a cada persona con su provincia.
+"""
+
 import os
 import pdfplumber
 import pandas as pd
 import re
 
-# Diccionario para "curar" automáticamente los errores del OCR en las provincias
+# Diccionario para corregir errores frecuentes de OCR en los nombres de provincias
 provincias_map = {
     "Buenos Aires": "Buenos Aires",
     "Capital": "Capital Federal",
@@ -26,9 +37,9 @@ provincias_map = {
     "Tucuman": "Tucumán"
 }
 
-# Armamos una Regex súper estricta que busque: "Apellido, Nombres" + "Provincia"
+# Patrón para identificar: "Apellido, Nombres" + "Provincia"
 prov_regex = r"(" + "|".join(provincias_map.keys()) + r")"
-# Atrapa el nombre (con sus comas y tildes), ignora basura en el medio, y atrapa la provincia
+# Captura el nombre (con tildes y signos), saltea caracteres de relleno y toma la provincia
 pattern = re.compile(r"([A-ZÁÉÍÓÚÑÜ][a-záéíóúñüA-ZÁÉÍÓÚÑÜ\s\.\(\)]+?,\s+[A-ZÁÉÍÓÚÑÜ][a-záéíóúñüA-ZÁÉÍÓÚÑÜ\s\.\(\)]+?)\s*(?:\.+|\d+|[a-z]{1,3})?\s*" + prov_regex)
 
 def procesar_catalogos_masivo(ruta_raiz, paginas_a_leer=30):

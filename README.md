@@ -225,21 +225,18 @@ A continuación se detalla la organización limpia y modular del repositorio:
 
 ```text
 ├── curacion_intervenciones/
-│   └── curador_ia.py                     # Curaduría y saneamiento de texto de intervenciones
+│   └── curador_ia.py                     # Curaduría asincrónica de discursos mediante IA (OpenAI)
 ├── Creacion_graficos/
 │   ├── graficos/                         # Visualizaciones interactivas en HTML (Plotly y Dashboards)
 │   │   ├── animado_partidos_int_abs.html
 │   │   ├── animado_partidos_pal_abs.html
-│   │   ├── animado_partidos_relativo.html
 │   │   ├── animado_provincias_diputados_per_capita_ints.html
 │   │   ├── animado_provincias_diputados_per_capita_pals.html
-│   │   ├── animado_provincias_diputados_relativo.html
 │   │   ├── animado_provincias_senadores_int_abs.html
 │   │   ├── animado_provincias_senadores_pal_abs.html
 │   │   ├── composicion_activa_diputados.html
 │   │   ├── composicion_activa_senadores.html
 │   │   ├── dashboard_roca_runciman_ner.html
-│   │   ├── dashboard_topic_modeling.html
 │   │   ├── evolucion_partidaria_1929_1939.html
 │   │   ├── mapa_provincias_diputados_per_capita.html
 │   │   ├── mapa_provincias_senadores.html
@@ -247,24 +244,26 @@ A continuación se detalla la organización limpia y modular del repositorio:
 │   │   ├── porcentaje_provincias_diputados_ratio.html
 │   │   ├── porcentaje_provincias_senadores.html
 │   │   └── volumen_total_intervenciones.html
-│   ├── bancas_diputados.py               # Diccionario de bancas e ingesta directa desde las tablas 3NF
-│   ├── eda_provincias.py                 # Análisis exploratorio provincial (absoluto y relativo)
+│   ├── bancas_diputados.py               # Ponderación por bancas históricas y consultas a Supabase 3NF
+│   ├── eda_provincias.py                 # Análisis exploratorio provincial (absoluto y per cápita)
 │   ├── eda_provincias_porcentaje.py      # Participación provincial en términos proporcionales
-│   ├── evolucion_composicion.py          # Análisis de la composición de las cámaras
-│   ├── evolucion_partidaria.py           # Dinámica de los partidos políticos en el tiempo
-│   ├── generar_dashboard_ner.py          # Generador unificado del Dashboard NER multi-nivel (4 capas)
+│   ├── evolucion_composicion.py          # Legisladores activos por partido en ambas cámaras
+│   ├── evolucion_partidaria.py           # Dinámica temporal de las bancadas partidarias
+│   ├── generar_dashboard_ner.py          # Generador del Dashboard interactivo NER y tabla documental
 │   ├── interv_totales.py                 # Cálculo de totales y agregados del corpus
-│   ├── mapa_interactivo.py               # Generación de mapas coropléticos con Plotly
-│   └── provincias.geojson                # Geometrías de las provincias argentinas
-├── database_connection.py                # Módulo de conexión a base de datos Supabase
-├── motor_ner.py                          # Motor de Reconocimiento de Entidades (NER) y ABSA sobre 3NF
-├── Lista Entidades - OCT26.pdf           # Catálogo de referencia de entidades políticas y comerciales
-├── extractor_intervenciones.py           # Parser y extractor de discursos parlamentarios a doble columna
-├── extractor_provincias.py               # Extractor del padrón histórico de legisladores y provincias
-├── extractor_sumarios_leyes.py           # Extractor de sumarios temáticos, proyectos y leyes sancionadas
-├── extractor_fechas_sesiones.py          # Extractor de sesiones, fechas y autoridades sobre los 209 tomos PDF
-├── .gitignore                            # Exclusiones de control de versiones
-└── README.md                             # Documentación general y arquitectura 3NF del repositorio
+│   ├── mapa_interactivo.py               # Mapas coropléticos de la Argentina con slider temporal
+│   └── provincias.geojson                # Geometrías oficiales de las provincias argentinas (IGN)
+├── database_connection.py                # Cliente de conexión centralizada a Supabase
+├── motor_ner.py                          # Motor de Reconocimiento de Entidades (NER) y ABSA
+├── extractor_intervenciones.py           # Extractor de discursos a doble columna y cruce difuso de oradores
+├── extractor_provincias.py               # Extractor del padrón de legisladores y distritos provinciales
+├── extractor_sumarios_leyes.py           # Extractor de sumarios temáticos, proyectos y las 1.087 leyes
+├── extractor_fechas_sesiones.py          # Extractor de las 1.282 sesiones y fechas exactas en los 209 tomos
+├── schema_supabase.dbml                  # Definición del esquema relacional en 3NF (DBML)
+├── requirements.txt                      # Dependencias del proyecto en Python
+├── .env.example                          # Plantilla de variables de entorno requeridas
+├── .gitignore                            # Reglas de exclusión de git
+└── README.md                             # Documentación metodológica y técnica del repositorio
 ```
 
 ---
@@ -291,16 +290,24 @@ python -m venv venv
 source venv/bin/activate
 
 # Instalar dependencias
-pip install numpy pandas plotly supabase python-dotenv pymupdf openai
+pip install -r requirements.txt
 ```
 
 ### Variables de Entorno (`.env`)
-Para la conexión a la base de datos o utilidades de curaduría:
+Copiar la plantilla de ejemplo y completar las credenciales correspondientes:
 
+```bash
+# En Windows PowerShell:
+Copy-Item .env.example .env
+# En Linux/macOS:
+cp .env.example .env
+```
+
+Contenido requerido en `.env`:
 ```env
 SUPABASE_URL=https://tu-proyecto.supabase.co
 SUPABASE_KEY=tu-clave-anon-o-service-role
-GEMINI_API_KEY=tu-api-key-de-gemini  # Opcional para curador_ia
+OPENAI_API_KEY=tu-api-key-de-openai   # Opcional para curador_ia.py
 ```
 
 ### Ejecución del Motor NER y Generación de Gráficos
@@ -308,7 +315,7 @@ GEMINI_API_KEY=tu-api-key-de-gemini  # Opcional para curador_ia
 # Ejecutar el motor NER y ABSA directamente sobre las tablas 3NF
 python motor_ner.py --lote 1000
 
-# Generar el Dashboard interactivo NER unificado (4 capas metodológicas)
+# Generar el Dashboard interactivo NER unificado
 python Creacion_graficos/generar_dashboard_ner.py
 ```
 
@@ -316,11 +323,31 @@ python Creacion_graficos/generar_dashboard_ner.py
 
 ## 📊 Visualizaciones y Resultados
 
-Los gráficos interactivos generados se encuentran en la carpeta [`Creacion_graficos/graficos/`](Creacion_graficos/graficos/) en formato HTML autocontenido (Plotly). Pueden abrirse directamente en cualquier navegador web para explorar:
+Todas las visualizaciones son documentos HTML autocontenidos generados con Plotly que pueden descargarse o abrirse directamente en cualquier navegador web:
 
-* **Mapas provinciales per cápita**: Representación territorial de la actividad parlamentaria ajustada por bancas asignadas.
-* **Evolución partidaria**: Trayectoria y volumen de discurso de los principales bloques a lo largo del período 1929–1939.
-* **Composición activa de las cámaras**: Desglose anual de la participación de senadores y diputados.
+### 🌐 Dashboard Analítico Interactivo
+* [**Dashboard Roca-Runciman y Entidades de Política Comercial**](Creacion_graficos/graficos/dashboard_roca_runciman_ner.html): Panel unificado con métricas clave, filtros interactivos en vivo (año, provincia, partido político, ley tratada, palabra clave) y tabla documental de discursos.
+
+### 🗺️ Cartografía Parlamentaria Per Cápita
+* [**Mapa de Diputados (Intervenciones per cápita)**](Creacion_graficos/graficos/mapa_provincias_diputados_per_capita.html): Actividad provincial ponderada por las 158 bancas históricas, con slider temporal y marcador interactivo para CABA.
+* [**Mapa del Senado (Intervenciones por provincia)**](Creacion_graficos/graficos/mapa_provincias_senadores.html): Nivel de debate en el Senado bajo la distribución federal paritaria (2 senadores por provincia).
+
+### 📈 Dinámica Partidaria y Composición de Cámaras
+* [**Evolución Partidaria 1929–1939**](Creacion_graficos/graficos/evolucion_partidaria_1929_1939.html): Top 10 de fuerzas políticas por volumen de intervenciones a lo largo de la década.
+* [**Composición Activa en Diputados**](Creacion_graficos/graficos/composicion_activa_diputados.html): Cantidad anual de diputados con uso efectivo de la palabra por bancada política.
+* [**Composición Activa en el Senado**](Creacion_graficos/graficos/composicion_activa_senadores.html): Senadores activos por partido político entre 1929 y 1939.
+
+### 📊 Análisis Exploratorio Provincial y Partidario (EDA)
+* [**Partidos: Intervenciones por año (Absoluto)**](Creacion_graficos/graficos/animado_partidos_int_abs.html)
+* [**Partidos: Volumen de palabras por año (Absoluto)**](Creacion_graficos/graficos/animado_partidos_pal_abs.html)
+* [**Diputados: Intervenciones per cápita por provincia**](Creacion_graficos/graficos/animado_provincias_diputados_per_capita_ints.html)
+* [**Diputados: Volumen de palabras per cápita por provincia**](Creacion_graficos/graficos/animado_provincias_diputados_per_capita_pals.html)
+* [**Senado: Intervenciones por provincia por año**](Creacion_graficos/graficos/animado_provincias_senadores_int_abs.html)
+* [**Senado: Palabras por provincia por año**](Creacion_graficos/graficos/animado_provincias_senadores_pal_abs.html)
+* [**Porcentajes Provinciales en Diputados**](Creacion_graficos/graficos/porcentaje_provincias_diputados_per_capita.html)
+* [**Ratio de Intensidad Discursiva en Diputados**](Creacion_graficos/graficos/porcentaje_provincias_diputados_ratio.html)
+* [**Porcentajes Provinciales en el Senado**](Creacion_graficos/graficos/porcentaje_provincias_senadores.html)
+* [**Volumen Total de Intervenciones**](Creacion_graficos/graficos/volumen_total_intervenciones.html)
 
 ---
 

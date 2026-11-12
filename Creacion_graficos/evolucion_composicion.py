@@ -1,9 +1,22 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+Evolución de la composición partidaria activa en ambas cámaras (1929-1939).
+
+Calcula la cantidad de legisladores únicos de cada partido que hicieron uso de la palabra
+al menos una vez en cada año parlamentario. Genera dos gráficos interactivos:
+1. `composicion_activa_diputados.html`
+2. `composicion_activa_senadores.html`
+Ambos gráficos muestran los valores numéricos sobre cada barra, sin auto-reproducción
+y con márgenes ajustados para evitar cualquier solapamiento.
+"""
+
 import os
 import sys
 import pandas as pd
 import plotly.express as px
 
-# Directorios
+# Directorios de trabajo y salida
 dir_actual = os.path.dirname(os.path.abspath(__file__))
 dir_graficos = os.path.join(dir_actual, "graficos")
 os.makedirs(dir_graficos, exist_ok=True)
@@ -17,10 +30,8 @@ if dir_actual not in sys.path:
 from database_connection import supabase
 from bancas_diputados import cargar_datos_intervenciones
 
-print("==================================================")
 print(" EVOLUCIÓN DE COMPOSICIÓN PARLAMENTARIA ACTIVA    ")
 print(" (1929-1939) - Diputados y Senadores              ")
-print("==================================================")
 
 df = cargar_datos_intervenciones(supabase)
 
@@ -56,28 +67,43 @@ def generar_html_animado(df_camara, nombre_camara, archivo_salida):
         animation_group="partido",
         range_y=[0, max_y], 
         title=f"Top 10 Partidos: Representantes Activos por Año - {nombre_camara} (1929-1939)",
-        labels={'representantes_activos': 'Nº de Legisladores Activos', 'partido': 'Partido Político', 'anio': 'Año'},
+        labels={'representantes_activos': 'Nº de Legisladores Activos', 'partido': '', 'anio': 'Año'},
         template="plotly_white",
         text="representantes_activos"
     )
 
-    fig.update_traces(textposition='outside', textfont_size=12, cliponaxis=False)
+    fig.update_traces(textposition='outside', textfont_size=11, cliponaxis=False)
+    for frame in fig.frames:
+        for d in frame.data:
+            d.textposition = 'outside'
+            d.cliponaxis = False
+            d.textfont = dict(size=11)
 
     fig.update_layout(
-        xaxis={'categoryorder': 'total descending'},
-        margin=dict(l=50, r=50, t=80, b=150),
+        xaxis=dict(categoryorder='total descending', title=None, tickangle=-35, tickfont=dict(size=11)),
+        yaxis=dict(title='Nº de Legisladores Activos'),
+        margin=dict(l=60, r=60, t=90, b=180),
         plot_bgcolor="rgba(245,245,245,0.8)",
         transition=dict(duration=0)
     )
 
     fig.layout.updatemenus = []
     if fig.layout.sliders:
+        fig.layout.sliders[0].y = -0.28
+        fig.layout.sliders[0].pad = dict(t=25, b=10)
+        fig.layout.sliders[0].currentvalue = dict(
+            prefix="Año: ",
+            font=dict(size=14, color="#1e293b", family="Arial Black")
+        )
         for step in fig.layout.sliders[0].steps:
             step.args[1]["transition"]["duration"] = 0
             step.args[1]["frame"]["duration"] = 0
 
     ruta_archivo = os.path.join(dir_graficos, archivo_salida)
-    fig.write_html(ruta_archivo, include_plotlyjs='cdn')
+    html_bruto = fig.to_html(include_plotlyjs='cdn')
+    html_limpio = html_bruto.replace("Plotly.animate(", "//Plotly.animate(")
+    with open(ruta_archivo, 'w', encoding='utf-8') as f:
+        f.write(html_limpio)
     print(f" [OK] Archivo generado: '{archivo_salida}'")
 
 
@@ -89,4 +115,3 @@ df_senadores = df_agrupado[df_agrupado['rol'] == 'Senador']
 generar_html_animado(df_diputados, "Cámara de Diputados", "composicion_activa_diputados.html")
 generar_html_animado(df_senadores, "Senado", "composicion_activa_senadores.html")
 
-print("\n¡Proceso de evolucion_composicion.py finalizado con éxito!")

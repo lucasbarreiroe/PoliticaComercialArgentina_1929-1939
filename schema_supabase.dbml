@@ -1,0 +1,121 @@
+// =====================================================================
+// Esquema Relacional 3NF de la Base de Datos Histórico-Parlamentaria en Supabase
+// Proyecto: Política Comercial Argentina 1929-1939 (UNSAM)
+// Compatible con dbdiagram.io y dbdocs.io
+// =====================================================================
+
+Table provincias {
+  id_provincia integer [pk, increment]
+  nombre varchar [not null]
+  region varchar
+  orden integer
+  Note: '15 distritos históricos con código INDEC y región'
+}
+
+Table partidos_politicos {
+  id_partido integer [pk, increment]
+  nombre varchar [not null]
+  sigla varchar
+  coalicion varchar
+  Note: '25 fuerzas políticas unificadas de la década de 1930'
+}
+
+Table personas {
+  id_persona integer [pk, increment]
+  nombre_estandarizado varchar [not null]
+  variantes_nombre text
+  provincia_id integer [ref: > provincias.id_provincia]
+  Note: '586 legisladores, ministros y autoridades del período'
+}
+
+Table mandatos_legislativos {
+  id_mandato integer [pk, increment]
+  persona_id integer [not null, ref: > personas.id_persona]
+  partido_id integer [ref: > partidos_politicos.id_partido]
+  provincia_id integer [ref: > provincias.id_provincia]
+  camara varchar [not null]
+  anio_inicio integer [not null]
+  anio_fin integer [not null]
+  Note: '744 bancas y cargos por persona, distrito y período'
+}
+
+Table tomos_diarios_sesiones {
+  id_tomo integer [pk, increment]
+  anio integer [not null]
+  numero_tomo integer
+  periodo varchar
+  archivo_pdf varchar
+  Note: '209 archivos PDF de tomos de Diarios de Sesiones'
+}
+
+Table sesiones {
+  id_sesion integer [pk, increment]
+  tomo_id integer [ref: > tomos_diarios_sesiones.id_tomo]
+  fecha date [not null]
+  numero_reunion integer
+  tipo_sesion varchar
+  camara varchar
+  Note: '1.282 reuniones parlamentarias identificadas con fecha exacta'
+}
+
+Table sesiones_autoridades {
+  id_autoridad integer [pk, increment]
+  sesion_id integer [not null, ref: > sesiones.id_sesion]
+  persona_id integer [not null, ref: > personas.id_persona]
+  rol varchar [not null]
+  Note: '1.276 registros de presidencia y secretaría de sesión'
+}
+
+Table sesion_sumarios {
+  id_sumario integer [pk, increment]
+  sesion_id integer [not null, ref: > sesiones.id_sesion]
+  orden integer
+  tema_resumen text
+  Note: '7.469 entradas temáticas del sumario de cada reunión'
+}
+
+Table leyes {
+  id_ley integer [pk, increment]
+  numero_ley integer [unique, not null]
+  titulo_oficial text
+  fecha_sancion date
+  periodo varchar
+  Note: '2.136 leyes: 1.087 sancionadas (1929-1939) + 1.049 pre-1929'
+}
+
+Table iniciativas_legislativas {
+  id_iniciativa integer [pk, increment]
+  sesion_id integer [ref: > sesiones.id_sesion]
+  ley_sancionada_id integer [ref: > leyes.id_ley]
+  extracto_iniciativa text
+  tipo_iniciativa varchar
+  Note: '9.669 proyectos, despachos y leyes tratadas en recinto'
+}
+
+Table articulos_iniciativa {
+  id_articulo integer [pk, increment]
+  iniciativa_id integer [not null, ref: > iniciativas_legislativas.id_iniciativa]
+  numero_articulo integer [not null]
+  texto_articulo text
+  Note: '50.329 artículos individuales normalizados de leyes y proyectos'
+}
+
+Table intervenciones {
+  id_intervencion integer [pk, increment]
+  sesion_id integer [not null, ref: > sesiones.id_sesion]
+  persona_id integer [ref: > personas.id_persona]
+  mandato_id integer [ref: > mandatos_legislativos.id_mandato]
+  pagina_pdf integer
+  orador_original varchar
+  texto_intervencion text
+  texto_canonico text
+  Note: '64.636 discursos vinculados a sesión, orador, mandato y texto'
+}
+
+Table intervenciones_leyes_mencionadas {
+  id_mencion integer [pk, increment]
+  intervencion_id integer [not null, ref: > intervenciones.id_intervencion]
+  ley_id integer [not null, ref: > leyes.id_ley]
+  texto_mencion varchar
+  Note: '8.563 relaciones entre cada intervención y las leyes citadas'
+}

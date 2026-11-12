@@ -1,0 +1,67 @@
+# Variables de entorno y credenciales (CRÍTICO: nunca subir al repositorio)
+.env
+.env.local
+.env.development
+.env.production
+*.env
+!.env.example
+
+# Entornos virtuales
+venv/
+.venv/
+env/
+ENV/
+
+# Python cache y bytecode
+__pycache__/
+*.py[cod]
+*$py.class
+*.pyc
+
+# Archivos pesados / caches locales
+Creacion_graficos/cache_intervenciones_enriquecidas.pkl.gz
+*.pkl.gz
+*.pkl
+
+# Archivos temporales de compilación LaTeX
+*.aux
+*.fls
+*.fdb_latexmk
+*.log
+*.out
+*.synctex.gz
+*.toc
+*.lot
+*.lof
+
+# Configuraciones de IDEs
+.vscode/
+.idea/
+*.sublime-project
+*.sublime-workspace
+
+# Archivos temporales del sistema
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Scripts temporales de escaneo/medición
+scan_keys.py
+migrate_key_to_env.py
+list_graficos.py
+
+# Documentos finales, portadas y presentaciones (entregables externos)
+*.pdf
+*.pptx
+*.docx
+*.docx.txt
+*.xlsx
+Anexo_III_Informe_Final.tex
+
+# Generadores de capturas e imágenes para el informe en PDF
+generar_capturas_alta_resolucion.py
+generar_capturas_grandes_hd.py
+generar_capturas_hd.py
+generar_der_close_up.py
+generar_diagrama_der.py
+imagenes/

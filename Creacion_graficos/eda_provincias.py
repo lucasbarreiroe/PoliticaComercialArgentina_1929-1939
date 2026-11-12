@@ -1,9 +1,26 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+Visualizaciones de análisis exploratorio (EDA) por partido y provincia (1929-1939).
+
+Genera los gráficos de barras interactivos con slider anual:
+1. `animado_partidos_int_abs.html` y `animado_partidos_pal_abs.html`:
+   Intervenciones y palabras por partido político en cada año.
+2. `animado_provincias_diputados_per_capita_ints.html` y `..._pals.html`:
+   Métricas niveladas por banca (per cápita) en Diputados.
+3. `animado_provincias_senadores_int_abs.html` y `..._pal_abs.html`:
+   Participación provincial en el Senado (2 bancas fijas por provincia).
+
+Todos los gráficos se generan estáticos de entrada (sin reproducción automática)
+para que el usuario avance año por año sin choques de texto ni saltos bruscos.
+"""
+
 import os
 import sys
 import pandas as pd
 import plotly.express as px
 
-# Directorios
+# Directorios de trabajo y salida
 dir_actual = os.path.dirname(os.path.abspath(__file__))
 dir_graficos = os.path.join(dir_actual, "graficos")
 os.makedirs(dir_graficos, exist_ok=True)
@@ -23,10 +40,8 @@ from bancas_diputados import (
     BANCAS_SENADORES_POR_PROVINCIA
 )
 
-print("===============================================================")
 print("  EDA PARLAMENTARIO: PARTIDOS Y PROVINCIAS (1929-1939)")
 print("  Normalización y Per-Capitalización en Cámara de Diputados")
-print("===============================================================")
 
 df = cargar_datos_intervenciones(supabase)
 
@@ -39,16 +54,27 @@ def generar_html(df_plot, x_col, y_col, color_col, titulo, archivo, barmode='rel
         df_plot, x=x_col, y=y_col, color=color_col, 
         animation_frame="anio", animation_group=x_col,
         range_y=[0, max_y], title=titulo, barmode=barmode,
-        labels={y_col: label_y, x_col: x_col.capitalize(), 'anio': 'Año'},
+        labels={y_col: label_y, x_col: '', 'anio': 'Año'},
         template="plotly_white",
         text=col_texto
     )
     
-    fig.update_traces(textposition='outside', textfont_size=12, cliponaxis=False)
+    fig.update_traces(textposition='outside', textfont_size=11, cliponaxis=False)
+    for frame in fig.frames:
+        for d in frame.data:
+            d.textposition = 'outside'
+            d.cliponaxis = False
+            d.textfont = dict(size=11)
     
     fig.update_layout(
-        xaxis={'categoryorder': 'total descending'},
-        margin=dict(l=50, r=50, t=80, b=100),
+        xaxis=dict(
+            categoryorder='total descending',
+            title=None,
+            tickangle=-35,
+            tickfont=dict(size=11)
+        ),
+        yaxis=dict(title=label_y),
+        margin=dict(l=60, r=60, t=90, b=170),
         plot_bgcolor="rgba(245,245,245,0.8)",
         transition=dict(duration=0)
     )
@@ -56,20 +82,26 @@ def generar_html(df_plot, x_col, y_col, color_col, titulo, archivo, barmode='rel
     fig.layout.updatemenus = []
     
     if fig.layout.sliders:
+        fig.layout.sliders[0].y = -0.28
+        fig.layout.sliders[0].pad = dict(t=25, b=10)
+        fig.layout.sliders[0].currentvalue = dict(
+            prefix="Año: ",
+            font=dict(size=14, color="#1e293b", family="Arial Black")
+        )
         for step in fig.layout.sliders[0].steps:
             step.args[1]["transition"]["duration"] = 0
             step.args[1]["frame"]["duration"] = 0
     
     ruta_archivo = os.path.join(dir_graficos, archivo)
-    fig.write_html(ruta_archivo, include_plotlyjs='cdn')
+    html_bruto = fig.to_html(include_plotlyjs='cdn')
+    html_limpio = html_bruto.replace("Plotly.animate(", "//Plotly.animate(")
+    with open(ruta_archivo, 'w', encoding='utf-8') as f:
+        f.write(html_limpio)
     print(f" [OK] {archivo}")
 
 
 anios = range(1929, 1940)
 
-# ==============================================================
-# 1. ANÁLISIS DE PARTIDOS POLÍTICOS (AMBAS CÁMARAS)
-# ==============================================================
 print("\n[+] Procesando Partidos Políticos...")
 df_politico = df[~df['partido_limpio'].isin(["Trámite", "No Identificado (Real)"])]
 
@@ -102,18 +134,6 @@ df_part_final = df_part_final.sort_values(by=['anio', 'ints'], ascending=[True, 
 generar_html(df_part_final, 'partido_limpio', 'ints', 'partido_limpio', "Partidos: Intervenciones por Año (Absoluto)", "animado_partidos_int_abs.html", label_y="Nº Intervenciones")
 generar_html(df_part_final, 'partido_limpio', 'pals', 'partido_limpio', "Partidos: Volumen de Palabras por Año (Absoluto)", "animado_partidos_pal_abs.html", label_y="Nº Palabras")
 
-df_part_rel = df_part_final[['anio', 'partido_limpio', 'pct_bancas', 'pct_palabras']].melt(
-    id_vars=['anio', 'partido_limpio'], value_vars=['pct_bancas', 'pct_palabras'], var_name='Métrica', value_name='Porcentaje'
-)
-df_part_rel['Métrica'] = df_part_rel['Métrica'].replace({'pct_bancas': '% Bancas Activas (Formal)', 'pct_palabras': '% Palabras (Real)'})
-df_part_rel = df_part_rel.sort_values(by=['anio', 'partido_limpio', 'Métrica'])
-df_part_rel['Porcentaje'] = df_part_rel['Porcentaje'].round(2)
-generar_html(df_part_rel, 'partido_limpio', 'Porcentaje', 'Métrica', "Partidos: Representación Formal vs Voz Real por Año", "animado_partidos_relativo.html", barmode='group', max_y_mult=1.1)
-
-
-# ==============================================================
-# 2. PROVINCIAS EN CÁMARA DE DIPUTADOS (NORMALIZADO PER CÁPITA)
-# ==============================================================
 print("\n[+] Procesando Provincias en la CÁMARA DE DIPUTADOS (Normalizado por bancas)...")
 df_dip_prov = calcular_metricas_provinciales_por_anio(df, camara='Diputados')
 
@@ -122,9 +142,9 @@ todas_provs_dip = df_dip_prov['provincia'].unique()
 grilla_dip = pd.MultiIndex.from_product([anios, todas_provs_dip], names=['anio', 'provincia']).to_frame(index=False)
 df_dip_completo = pd.merge(grilla_dip, df_dip_prov, on=['anio', 'provincia'], how='left').fillna(0)
 
-# Etiquetas formateadas
-df_dip_completo['texto_pc_ints'] = df_dip_completo['ints_per_capita'].apply(lambda v: f"{v:.1f}" if v > 0 else "")
-df_dip_completo['texto_pc_pals'] = df_dip_completo['pals_per_capita'].apply(lambda v: f"{int(v):,}".replace(",", ".") if v > 0 else "")
+# Etiquetas formateadas uniformemente para todas las columnas
+df_dip_completo['texto_pc_ints'] = df_dip_completo['ints_per_capita'].apply(lambda v: f"{v:.1f}")
+df_dip_completo['texto_pc_pals'] = df_dip_completo['pals_per_capita'].apply(lambda v: f"{int(v):,}".replace(",", "."))
 
 # A. Intervenciones Per Cápita (por Diputado)
 generar_html(
@@ -144,27 +164,6 @@ generar_html(
     texto_formato='texto_pc_pals'
 )
 
-# C. Representación Formal (% Bancas) vs Voz Real (% Palabras) en Diputados
-df_dip_rel = df_dip_completo[['anio', 'provincia', 'pct_bancas', 'pct_pals_bruto']].melt(
-    id_vars=['anio', 'provincia'], value_vars=['pct_bancas', 'pct_pals_bruto'], var_name='Métrica', value_name='Porcentaje'
-)
-df_dip_rel['Métrica'] = df_dip_rel['Métrica'].replace({
-    'pct_bancas': '% Bancas Diputados (Formal)',
-    'pct_pals_bruto': '% Palabras Habladas (Real)'
-})
-df_dip_rel = df_dip_rel.sort_values(by=['anio', 'provincia', 'Métrica'])
-df_dip_rel['Porcentaje'] = df_dip_rel['Porcentaje'].round(2)
-generar_html(
-    df_dip_rel, 'provincia', 'Porcentaje', 'Métrica',
-    "<b>Diputados: Representación Formal (% Bancas) vs Voz Real (% Palabras)</b><br><sup style='color:#7f8c8d'>Compara el peso electoral formal frente al protagonismo discursivo real</sup>",
-    "animado_provincias_diputados_relativo.html",
-    barmode='group', max_y_mult=1.1
-)
-
-
-# ==============================================================
-# 3. PROVINCIAS EN CÁMARA DE SENADORES (2 BANCAS C/JURISDICCIÓN)
-# ==============================================================
 print("\n[+] Procesando Provincias en la CÁMARA DE SENADORES (2 senadores c/u)...")
 df_sen_prov = calcular_metricas_provinciales_por_anio(df, camara='Senadores')
 

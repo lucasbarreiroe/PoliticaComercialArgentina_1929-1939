@@ -1,3 +1,14 @@
+"""
+Extractor de intervenciones parlamentarias desde los diarios de sesiones (PDF).
+
+La lógica principal es:
+1. Cortar cada página al medio geométricamente para leer primero toda la
+   columna izquierda y luego la derecha (evitando que se mezclen líneas).
+2. Filtrar cabeceras repetitivas y ruido típico de imprenta.
+3. Reconstruir los discursos uniendo palabras cortadas con guion al final de línea.
+4. Mapear cada orador con el padrón histórico en Supabase usando similitud de texto.
+"""
+
 import os
 import re
 import difflib
@@ -5,10 +16,12 @@ import pdfplumber
 import time
 from database_connection import supabase
 
+# Guardamos el padrón en memoria para no pegarle a Supabase en cada discurso
 CACHE_PARLAMENTARIOS = []
 ID_GENERICO_NO_IDENTIFICADO = None
 
 def inicializar_cache():
+    """Descarga el padrón una sola vez al inicio para que el matcheo sea rápido."""
     global CACHE_PARLAMENTARIOS, ID_GENERICO_NO_IDENTIFICADO
     print("-> Sincronizando padrón maestro desde Supabase...")
     
@@ -21,6 +34,7 @@ def inicializar_cache():
         if nombre_db == "NO IDENTIFICADO / FUNCIONARIO":
             ID_GENERICO_NO_IDENTIFICADO = row['id_parlamentario']
             
+    # Si todavía no existe el comodín para oradores no identificados, lo creamos
     if not ID_GENERICO_NO_IDENTIFICADO:
         res = supabase.table("parlamentarios").insert({
             "nombre_apellido": "NO IDENTIFICADO / FUNCIONARIO",
@@ -29,16 +43,18 @@ def inicializar_cache():
         ID_GENERICO_NO_IDENTIFICADO = res.data[0]['id_parlamentario']
 
 def buscar_parlamentario_seguro(orador_crudo):
-    """Busca al legislador y devuelve su ID. Imprime el porcentaje de similitud para auditoría."""
+    """
+    Busca al legislador por apellido con tolerancia a erratas de OCR.
+    Usamos un umbral de 75% para no asociar oradores equivocados.
+    """
     orador_limpio = re.sub(r'\(.*?\)', '', orador_crudo).strip().lower()
     apellidos_conocidos = [p['apellido'] for p in CACHE_PARLAMENTARIOS]
     
-    # Extraemos el mejor match y su porcentaje de coincidencia
+    # Buscamos el apellido más parecido
     matches = difflib.get_close_matches(orador_limpio, apellidos_conocidos, n=1, cutoff=0.75)
     
     if matches:
         apellido_encontrado = matches[0]
-        # Calculamos el ratio real para mostrarlo
         ratio = difflib.SequenceMatcher(None, orador_limpio, apellido_encontrado).ratio()
         
         for p in CACHE_PARLAMENTARIOS:
@@ -46,20 +62,21 @@ def buscar_parlamentario_seguro(orador_crudo):
                 print(f"      [Match] '{orador_crudo}' -> {apellido_encontrado.title()} (Similitud: {ratio:.2f})")
                 return p['id']
                 
+    # Si no hubo match seguro, lo mandamos como externo/no identificado
     print(f"      [No Identificado] '{orador_crudo}' -> Asignado a Funcionario/Externo")
     return ID_GENERICO_NO_IDENTIFICADO
 
 def corregir_ocr(texto):
-    """Limpia los errores recurrentes del escáner."""
+    """Corrige errores recurrentes del escáner en impresiones de los años treinta."""
     texto = re.sub(r'\bSoñor(es)?\b', 'Señor', texto, flags=re.IGNORECASE)
     texto = re.sub(r'\bdo\b', 'de', texto)
     texto = re.sub(r'\s+\.', '.', texto)
     texto = re.sub(r'\s+,', ',', texto)
-    # Limpiar guiones perdidos o barras invertidas
     texto = re.sub(r'\\[\s]*$', '', texto) 
     return texto.strip()
 
 def es_ruido_de_imprenta(linea):
+    """Detecta encabezados de página y números de reunión para no meterlos en el discurso."""
     patrones_basura = [
         r'^CONGRESO NACIONAL$',
         r'^C[AÁ]MARA DE (DIPUTADOS|SENADORES)$',
@@ -74,6 +91,7 @@ def es_ruido_de_imprenta(linea):
     return False
 
 def reconstruir_parrafo(lineas):
+    """Une renglones sueltos de una intervención pegando palabras cortadas con guion."""
     texto_final = ""
     for linea in lineas:
         linea = linea.strip()
@@ -87,7 +105,10 @@ def reconstruir_parrafo(lineas):
     return corregir_ocr(texto_final)
 
 def extraer_texto_columnas(ruta_pdf):
-    """Extrae separando estrictamente los caracteres por su coordenada física (sin reconstrucción de grilla)."""
+    """
+    Corta la página físicamente en mitad izquierda y derecha.
+    Así leemos la primera columna de punta a punta y recién después pasamos a la segunda.
+    """
     texto_completo = []
     
     with pdfplumber.open(ruta_pdf) as pdf:
@@ -96,9 +117,9 @@ def extraer_texto_columnas(ruta_pdf):
             mitad = pagina.width / 2
             alto = pagina.height
             
-            # Recorte Izquierdo
+            # Columna izquierda
             texto_izq = pagina.within_bbox((0, 0, mitad, alto)).extract_text(layout=False)
-            # Recorte Derecho
+            # Columna derecha
             texto_der = pagina.within_bbox((mitad, 0, pagina.width, alto)).extract_text(layout=False)
             
             if texto_izq:
@@ -108,6 +129,8 @@ def extraer_texto_columnas(ruta_pdf):
             if texto_der:
                 renglones = [r.strip() for r in texto_der.split('\n') if r.strip()]
                 texto_completo.extend(renglones)
+
+    return texto_completo
 
     return texto_completo
 

@@ -1,3 +1,17 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""
+Generador de los mapas coropléticos interactivos de la Argentina (1929-1939).
+
+Arma dos visualizaciones HTML independientes (una para Diputados y otra para el Senado):
+1. Muestra en un mapa de calor la intensidad del debate por provincia ponderada per cápita
+   (intervenciones divididas por la cantidad de bancas de cada distrito).
+2. Incluye un marcador destacado para CABA con hover completo, para que no quede
+   oculta por la escala geográfica de las provincias grandes.
+3. Incorpora una tabla lateral ordenada por nivel de participación y una barra de años
+   para recorrer la década de 1929 a 1939.
+"""
+
 import os
 import sys
 import json
@@ -25,10 +39,8 @@ from bancas_diputados import (
     BANCAS_SENADORES_POR_PROVINCIA
 )
 
-print("==================================================")
 print(" MAPA DE INTERVENCIONES NORMALIZADO PER CÁPITA   ")
 print(" Cámara de Diputados y Senado (1929-1939)        ")
-print("==================================================")
 
 # 1. Cartografía oficial IGN
 print("[+] Obteniendo cartografía oficial de Argentina...")
@@ -53,6 +65,11 @@ if not mapa_arg:
     except Exception as e:
         print(f"[!] Error al descargar el GeoJSON: {e}")
         sys.exit(1)
+
+# Homologar CABA en el GeoJSON
+for feature in mapa_arg['features']:
+    if feature['properties'].get('nombre') in ['Ciudad Autónoma de Buenos Aires', 'Capital Federal']:
+        feature['properties']['nombre'] = 'CABA'
 
 # 2. Cargar intervenciones parlamentarias
 df = cargar_datos_intervenciones(supabase)
@@ -88,6 +105,10 @@ def generar_mapa_con_tabla(
     df_metricas = calcular_metricas_provinciales_por_anio(
         df, camara=camara, usar_nombres_geojson=True
     )
+    df_metricas['provincia'] = df_metricas['provincia'].replace({
+        'Ciudad Autónoma de Buenos Aires': 'CABA',
+        'Capital Federal': 'CABA'
+    })
 
     grilla = pd.MultiIndex.from_product([anios, todas_las_provincias], names=['anio', 'provincia']).to_frame(index=False)
     df_final = pd.merge(grilla, df_metricas, on=['anio', 'provincia'], how='left').fillna(0)
@@ -112,6 +133,20 @@ def generar_mapa_con_tabla(
     escala_color = azules_senado if es_senado else rojos_fuertes
     color_header = "#154360" if es_senado else "#E60000"
 
+    hovertemplate_caba = (
+        "<b style='font-size:16px;'>CABA (Capital Federal)</b><br><br>"
+        "• Bancas: <b>%{customdata[0]}</b> (%{customdata[1]}% de la Cámara)<br>"
+        "• Intervenciones Totales: <b>%{customdata[2]}</b> (%{customdata[3]}% del recinto)<br>"
+        "• <b>Intervenciones / Diputado: %{marker.color:.2f}</b><br>"
+        "• % Ponderado Per Cápita: <b>%{customdata[4]}%</b><br>"
+        "• Ratio Intensidad (Voz/Bancas): <b>%{customdata[5]}x</b><extra></extra>"
+        if not es_senado else
+        "<b style='font-size:16px;'>CABA (Capital Federal)</b><br><br>"
+        "• Bancas Senadores: <b>2</b> (6.7% de la Cámara)<br>"
+        "• Intervenciones Totales: <b>%{customdata[2]}</b> (%{customdata[3]}% del debate)<br>"
+        "• Intervenciones / Senador: <b>%{marker.color:.2f}</b><extra></extra>"
+    )
+
     for anio in anios:
         df_anio = df_final[df_final['anio'] == anio].copy()
         
@@ -128,6 +163,15 @@ def generar_mapa_con_tabla(
             'custom_bancas', 'custom_pct_bancas', 'custom_ints',
             'custom_pct_ints', 'custom_pct_pc', 'custom_ratio'
         ]].values
+
+        # Datos específicos para CABA
+        df_caba = df_anio[df_anio['provincia'] == 'CABA']
+        caba_val = float(df_caba[metrica_color].values[0]) if not df_caba.empty else 0.0
+        caba_custom = (
+            df_caba[['custom_bancas', 'custom_pct_bancas', 'custom_ints', 'custom_pct_ints', 'custom_pct_pc', 'custom_ratio']].values
+            if not df_caba.empty
+            else [[32 if not es_senado else 2, 20.3 if not es_senado else 6.7, 0, 0, 0, 0]]
+        )
 
         # Tabla: ordenar por métrica principal descendente
         df_tabla = df_anio[df_anio['ints'] > 0].sort_values(by=metrica_color, ascending=False)
@@ -169,16 +213,41 @@ def generar_mapa_con_tabla(
                     ),
                     colorbar=dict(
                         title=f"<b>{label_barra}</b>",
-                        thicknessmode="pixels", thickness=15,
-                        lenmode="pixels", len=250,
-                        yanchor="middle", y=0.75,
-                        x=0.9,
-                        ticks="outside"
+                        thicknessmode="pixels", thickness=14,
+                        lenmode="pixels", len=210,
+                        yanchor="middle", y=0.72,
+                        x=0.88,
+                        ticks="outside",
+                        tickfont=dict(size=11)
                     )
                 )
             )
 
-            # 2. Trace Tabla Enriquecida Inferior
+            # 2. Trace Marcador Destacado CABA
+            fig.add_trace(
+                go.Scattergeo(
+                    lon=[-58.3816],
+                    lat=[-34.6037],
+                    mode='markers+text',
+                    text=['<b>CABA</b>'],
+                    textposition='top right',
+                    textfont=dict(size=12, color=color_header, family='Arial Black'),
+                    marker=dict(
+                        size=15,
+                        color=[caba_val],
+                        colorscale=escala_color,
+                        cmin=0,
+                        cmax=max_z,
+                        line=dict(width=2.5, color='#ffffff')
+                    ),
+                    customdata=caba_custom,
+                    hovertemplate=hovertemplate_caba,
+                    showlegend=False,
+                    name='CABA'
+                )
+            )
+
+            # 3. Trace Tabla Enriquecida Inferior
             columnas_header = (
                 ["<b>Provincia</b>", "<b>Bancas</b>", "<b>Total Ints</b>", "<b>Ints / Diputado</b>", "<b>% Voz Real</b>", "<b>Ratio Intensidad</b>"]
                 if not es_senado else
@@ -196,17 +265,17 @@ def generar_mapa_con_tabla(
                         values=columnas_header,
                         fill_color=color_header,
                         align="center",
-                        font=dict(color="white", size=13, family="Arial Black"),
+                        font=dict(color="white", size=12, family="Arial Black"),
                         height=28
                     ),
                     cells=dict(
                         values=valores_celdas,
                         fill_color="#F4F6F8",
                         align=["left", "center", "center", "center", "center", "center"] if not es_senado else ["left", "center", "center", "center", "center"],
-                        font=dict(color="#2C3E50", size=12),
-                        height=24
+                        font=dict(color="#2C3E50", size=11),
+                        height=22
                     ),
-                    domain=dict(x=[0.12, 0.88], y=[0.0, 0.32]) 
+                    domain=dict(x=[0.04, 0.96], y=[0.02, 0.35]) 
                 )
             )
 
@@ -224,8 +293,21 @@ def generar_mapa_con_tabla(
                     z=df_anio[metrica_color],
                     customdata=customdata_mapa
                 ),
+                go.Scattergeo(
+                    marker=dict(
+                        size=15,
+                        color=[caba_val],
+                        colorscale=escala_color,
+                        cmin=0,
+                        cmax=max_z,
+                        line=dict(width=2.5, color='#ffffff')
+                    ),
+                    customdata=caba_custom,
+                    hovertemplate=hovertemplate_caba
+                ),
                 go.Table(cells=dict(values=frame_valores_celdas))
             ],
+            traces=[0, 1, 2],
             name=str(anio)
         )
         frames.append(frame)
@@ -244,15 +326,15 @@ def generar_mapa_con_tabla(
 
     sliders = [dict(
         active=0,
-        y=0.45,
+        y=0.41,
         yanchor="bottom",
-        x=0.1,
-        len=0.8,
+        x=0.12,
+        len=0.76,
         currentvalue=dict(
-            font=dict(size=20, color=color_header, family="Arial Black"),
+            font=dict(size=18, color=color_header, family="Arial Black"),
             prefix="Año Legislativo: "
         ),
-        pad={"t": 10, "b": 10},
+        pad={"t": 15, "b": 10},
         steps=slider_steps,
         bgcolor="rgba(44, 62, 80, 0.6)",
         bordercolor="#2C3E50"
@@ -264,18 +346,18 @@ def generar_mapa_con_tabla(
         lataxis_range=[-55.5, -21.0], 
         lonaxis_range=[-74.0, -53.0],
         projection_type="mercator",
-        domain=dict(x=[0, 1], y=[0.55, 1.0])
+        domain=dict(x=[0.02, 0.98], y=[0.50, 0.95])
     )
 
     fig.update_layout(
-        height=1100, 
-        margin=dict(l=0, r=0, t=80, b=20),
+        height=1250, 
+        margin=dict(l=30, r=30, t=90, b=25),
         plot_bgcolor="rgba(255, 255, 255, 1)",
         paper_bgcolor="rgba(255, 255, 255, 1)",
         font=dict(family="Arial", color="#2C3E50"),
-        title=f"<b>{titulo}</b><br><sup style='color:#7f8c8d'>{subtitulo}</sup>",
+        title=f"<b>{titulo}</b><br><sup style='color:#7f8c8d; font-size:14px;'>{subtitulo}</sup>",
         title_x=0.5,
-        title_font_size=24,
+        title_font_size=23,
         sliders=sliders,
         updatemenus=[]
     )

@@ -1,31 +1,18 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
 """
-Módulo de Normalización, Carga 3NF y Bancas Históricas por Jurisdicción (1929-1939)
-===================================================================================
-Provee las constantes institucionales del Congreso Nacional, funciones de
-normalización intrínseca de texto (insensible a mayúsculas, tildes, puntos,
-barras o guiones) y carga enriquecida desde el esquema relacional puro en 3NF
-de Supabase (sin depender de vistas generadas).
+Este módulo maneja la distribución histórica de bancas y la normalización de texto
+para todos los gráficos del proyecto.
 
-En la Cámara de Diputados de la Nación (1929-1939), la distribución de
-bancas se regía por el censo electoral (total: 158 bancas):
-- Buenos Aires: 42
-- Capital Federal: 32
-- Santa Fe: 19
-- Córdoba: 15
-- Entre Ríos: 9
-- Corrientes: 7
-- Tucumán: 7
-- Mendoza: 6
-- Santiago del Estero: 6
-- Salta: 3
-- San Juan: 3
-- San Luis: 3
-- Catamarca: 2
-- La Rioja: 2
-- Jujuy: 2
+¿Por qué es importante ponderar por bancas?
+En la década de 1930, Buenos Aires y Capital Federal concentraban casi la mitad
+de los diputados (42 y 32 de 158). Si solo contamos palabras o intervenciones en bruto,
+la voz de esas dos provincias tapa completamente al resto del país.
+Al dividir las métricas por la cantidad de bancas de cada provincia (per cápita por legislador),
+podemos ver con claridad qué provincias del interior le dedicaron más energía relativa
+a discutir el tratado Roca-Runciman, las leyes de carnes o las juntas de granos y vinos.
 
-En el Senado de la Nación, cada provincia y la Capital Federal tenían exactamente
-2 senadores (total: 30 senadores), por lo que la proporción territorial era fija.
+En el Senado la cuenta es más simple: cada provincia y la Capital tenían 2 senadores (30 bancas en total).
 """
 
 import os
@@ -123,16 +110,13 @@ def normalizar_texto_busqueda(texto: Optional[str]) -> str:
     # Colapsar puntos de miles en números (ej. 11.693 -> 11693)
     s = _RE_MILES_PUNTO.sub("", s)
 
-    # Colapsar siglas separadas por puntos (ej. u.c.r. -> ucr, u.i.a. -> uia)
     def _unir_sigla(m):
         return "".join(g for g in m.groups() if g)
 
     s = _RE_SIGLAS_PUNTOS.sub(_unir_sigla, s)
 
-    # Homologar prefijos de leyes ('ley n° 11693' / 'ley nro 11693' -> 'ley 11693')
     s = _RE_LEY_PREFIJO.sub("ley ", s)
 
-    # Reemplazar puntos, barras, guiones y cualquier símbolo no alfanumérico por espacio
     s = _RE_NO_ALFANUM.sub(" ", s)
     return _RE_ESPACIOS.sub(" ", s).strip()
 
