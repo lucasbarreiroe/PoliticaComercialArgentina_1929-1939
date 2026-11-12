@@ -31,7 +31,15 @@ from supabase import create_client
 sys.stdout.reconfigure(encoding="utf-8", errors="replace")
 
 BASE_DIR = Path(__file__).resolve().parent
-load_dotenv(BASE_DIR / ".env")
+ROOT_DIR = BASE_DIR.parent
+if str(ROOT_DIR) not in sys.path:
+    sys.path.insert(0, str(ROOT_DIR))
+DIR_DB = ROOT_DIR / "base_de_datos"
+if str(DIR_DB) not in sys.path:
+    sys.path.insert(0, str(DIR_DB))
+
+load_dotenv(ROOT_DIR / ".env")
+load_dotenv()
 
 SUPABASE_URL = os.environ.get("SUPABASE_URL")
 SUPABASE_KEY = os.environ.get("SUPABASE_KEY")

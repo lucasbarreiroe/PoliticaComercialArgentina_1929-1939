@@ -14,12 +14,20 @@ Lo que hace es:
 
 import os
 import sys
+from pathlib import Path
 import re
 import csv
 import json
 import time
 import argparse
 import unicodedata
+
+ROOT_DIR = Path(__file__).resolve().parent.parent
+if str(ROOT_DIR) not in sys.path:
+    sys.path.insert(0, str(ROOT_DIR))
+DIR_DB = ROOT_DIR / "base_de_datos"
+if str(DIR_DB) not in sys.path:
+    sys.path.insert(0, str(DIR_DB))
 
 try:
     sys.stdout.reconfigure(encoding="utf-8", errors="replace")

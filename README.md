@@ -224,8 +224,18 @@ erDiagram
 A continuación se detalla la organización limpia y modular del repositorio:
 
 ```text
+├── base_de_datos/
+│   ├── database_connection.py            # Cliente de conexión centralizada a Supabase
+│   └── schema_supabase.dbml              # Definición del esquema relacional en 3NF (DBML)
+├── extractores/
+│   ├── extractor_fechas_sesiones.py      # Extractor de las 1.282 sesiones y fechas exactas en los 209 tomos
+│   ├── extractor_intervenciones.py       # Extractor de discursos a doble columna y cruce difuso de oradores
+│   ├── extractor_provincias.py           # Extractor del padrón de legisladores y distritos provinciales
+│   └── extractor_sumarios_leyes.py       # Extractor de sumarios temáticos, proyectos y las 1.087 leyes
 ├── curacion_intervenciones/
 │   └── curador_ia.py                     # Curaduría asincrónica de discursos mediante IA (OpenAI)
+├── analisis_ner/
+│   └── motor_ner.py                      # Motor de Reconocimiento de Entidades (NER) y ABSA
 ├── Creacion_graficos/
 │   ├── graficos/                         # Visualizaciones interactivas en HTML (Plotly y Dashboards)
 │   │   ├── animado_partidos_int_abs.html
@@ -253,13 +263,6 @@ A continuación se detalla la organización limpia y modular del repositorio:
 │   ├── interv_totales.py                 # Cálculo de totales y agregados del corpus
 │   ├── mapa_interactivo.py               # Mapas coropléticos de la Argentina con slider temporal
 │   └── provincias.geojson                # Geometrías oficiales de las provincias argentinas (IGN)
-├── database_connection.py                # Cliente de conexión centralizada a Supabase
-├── motor_ner.py                          # Motor de Reconocimiento de Entidades (NER) y ABSA
-├── extractor_intervenciones.py           # Extractor de discursos a doble columna y cruce difuso de oradores
-├── extractor_provincias.py               # Extractor del padrón de legisladores y distritos provinciales
-├── extractor_sumarios_leyes.py           # Extractor de sumarios temáticos, proyectos y las 1.087 leyes
-├── extractor_fechas_sesiones.py          # Extractor de las 1.282 sesiones y fechas exactas en los 209 tomos
-├── schema_supabase.dbml                  # Definición del esquema relacional en 3NF (DBML)
 ├── requirements.txt                      # Dependencias del proyecto en Python
 ├── .env.example                          # Plantilla de variables de entorno requeridas
 ├── .gitignore                            # Reglas de exclusión de git
@@ -313,7 +316,7 @@ OPENAI_API_KEY=tu-api-key-de-openai   # Opcional para curador_ia.py
 ### Ejecución del Motor NER y Generación de Gráficos
 ```bash
 # Ejecutar el motor NER y ABSA directamente sobre las tablas 3NF
-python motor_ner.py --lote 1000
+python analisis_ner/motor_ner.py --lote 1000
 
 # Generar el Dashboard interactivo NER unificado
 python Creacion_graficos/generar_dashboard_ner.py

@@ -11,11 +11,22 @@ ni alterar el vocabulario de la época.
 """
 
 import os
+import sys
 import asyncio
+from pathlib import Path
 from dotenv import load_dotenv
+
+ROOT_DIR = Path(__file__).resolve().parent.parent
+if str(ROOT_DIR) not in sys.path:
+    sys.path.insert(0, str(ROOT_DIR))
+DIR_DB = ROOT_DIR / "base_de_datos"
+if str(DIR_DB) not in sys.path:
+    sys.path.insert(0, str(DIR_DB))
+
 from openai import AsyncOpenAI
 from database_connection import supabase
 
+load_dotenv(ROOT_DIR / ".env")
 load_dotenv()
 
 # Configuración del cliente y parámetros de procesamiento

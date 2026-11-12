@@ -11,6 +11,9 @@ os.makedirs(dir_graficos, exist_ok=True)
 ruta_padre = os.path.abspath(os.path.join(dir_actual, '..'))
 if ruta_padre not in sys.path:
     sys.path.insert(0, ruta_padre)
+ruta_db = os.path.abspath(os.path.join(ruta_padre, 'base_de_datos'))
+if ruta_db not in sys.path:
+    sys.path.insert(0, ruta_db)
 if dir_actual not in sys.path:
     sys.path.insert(0, dir_actual)
 

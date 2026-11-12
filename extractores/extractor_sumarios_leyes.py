@@ -14,9 +14,19 @@ Acá hacemos:
 """
 
 import os
+import sys
 import re
 import time
 import unicodedata
+from pathlib import Path
+
+ROOT_DIR = Path(__file__).resolve().parent.parent
+if str(ROOT_DIR) not in sys.path:
+    sys.path.insert(0, str(ROOT_DIR))
+DIR_DB = ROOT_DIR / "base_de_datos"
+if str(DIR_DB) not in sys.path:
+    sys.path.insert(0, str(DIR_DB))
+
 import pymupdf as fitz  # PyMuPDF
 from database_connection import supabase
 

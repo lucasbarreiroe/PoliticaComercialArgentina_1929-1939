@@ -10,10 +10,20 @@ La lógica principal es:
 """
 
 import os
+import sys
 import re
 import difflib
 import pdfplumber
 import time
+from pathlib import Path
+
+ROOT_DIR = Path(__file__).resolve().parent.parent
+if str(ROOT_DIR) not in sys.path:
+    sys.path.insert(0, str(ROOT_DIR))
+DIR_DB = ROOT_DIR / "base_de_datos"
+if str(DIR_DB) not in sys.path:
+    sys.path.insert(0, str(DIR_DB))
+
 from database_connection import supabase
 
 # Guardamos el padrón en memoria para no pegarle a Supabase en cada discurso

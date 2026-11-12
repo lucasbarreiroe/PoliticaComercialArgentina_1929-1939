@@ -6,10 +6,14 @@ para que lo usen todos los extractores y scripts de análisis del proyecto.
 """
 
 import os
+from pathlib import Path
 from dotenv import load_dotenv
 from supabase import create_client, Client
 
-# Levantamos las credenciales locales (.env no se sube al repo)
+# Levantamos las credenciales locales (.env en la raíz del proyecto)
+BASE_DIR = Path(__file__).resolve().parent
+ROOT_DIR = BASE_DIR.parent
+load_dotenv(ROOT_DIR / ".env")
 load_dotenv()
 
 URL: str = os.getenv("SUPABASE_URL")
